@@ -339,7 +339,6 @@ export async function bootstrapRoomProjection(roomId: string): Promise<CalendarS
   const syncedAt = nowIso();
   let recallError: string | null = null;
   let googleFallbackError: string | null = null;
-  const updatedAtGte = getLatestProjectionUpdatedAt(calendarId) ?? undefined;
 
   try {
     if (process.env.RECALL_API_KEY) {
@@ -399,7 +398,7 @@ export async function bootstrapRoomProjection(roomId: string): Promise<CalendarS
         roomId,
         calendarId,
         syncedAt,
-        updatedAtGte,
+        updatedAtGte: undefined,
         syncMode: 'google_api_fallback',
       });
     } catch (error) {

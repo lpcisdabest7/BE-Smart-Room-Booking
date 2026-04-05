@@ -17,12 +17,42 @@ const app = express();
 getDatabase();
 seedRoomCatalog();
 
+const defaultCorsPatterns = [
+  /^https?:\/\/localhost(?::\d+)?$/i,
+  /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i,
+  /^https:\/\/[a-z0-9-]+\.vercel\.app$/i,
+  /^https:\/\/[a-z0-9-]+\.ngrok-free\.app$/i,
+];
+
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) {
+    return true;
+  }
+
+  if (config.frontendOrigins.some((allowed) => allowed.toLowerCase() === origin.toLowerCase())) {
+    return true;
+  }
+
+  return defaultCorsPatterns.some((pattern) => pattern.test(origin));
+}
+
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    if (isAllowedOrigin(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error(`Origin not allowed by CORS: ${origin || 'unknown'}`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+};
+
 app.use(
-  cors({
-    origin: config.frontendUrl,
-    credentials: true,
-  })
+  cors(corsOptions)
 );
+app.options(/.*/, cors(corsOptions));
 app.use(
   express.json({
     verify: (req, _res, buffer) => {
@@ -58,4 +88,3 @@ app.listen(config.port, () => {
 });
 
 export default app;
-

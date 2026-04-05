@@ -6,8 +6,8 @@ import {
   createConfirmedBooking,
   getUserBookingDetail,
   listBookings,
+  reconcileUserBookingsWithCalendar,
 } from '../services/booking.service';
-import { bootstrapRoomProjection } from '../services/calendar-sync.service';
 import { formatPublicBooking } from '../services/public-api.service';
 import type { BookingStatus } from '../services/sync.types';
 
@@ -58,22 +58,7 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     status: parseStatus(req.query.status),
     limit: parseLimit(req.query.limit, 30),
   });
-
-  const roomIds = Array.from(
-    new Set(
-      bookings
-        .filter((booking) => booking.status === 'pending' || booking.status === 'confirmed' || booking.status === 'modified')
-        .map((booking) => booking.roomId)
-    )
-  );
-
-  for (const roomId of roomIds) {
-    try {
-      await bootstrapRoomProjection(roomId);
-    } catch {
-      // Keep endpoint available even when one room fails to sync.
-    }
-  }
+  await reconcileUserBookingsWithCalendar(userEmail, parseLimit(req.query.limit, 120));
 
   bookings = listBookings({
     userEmail,
@@ -87,13 +72,9 @@ router.get('/:bookingId', async (req: Request, res: Response): Promise<void> => 
   const bookingId = normalizeParam(req.params.bookingId);
   let booking = getUserBookingDetail(bookingId, req.user?.email || 'unknown');
 
-  if (booking && (booking.status === 'pending' || booking.status === 'confirmed' || booking.status === 'modified')) {
-    try {
-      await bootstrapRoomProjection(booking.roomId);
-      booking = getUserBookingDetail(bookingId, req.user?.email || 'unknown');
-    } catch {
-      // Keep response stable with last known booking state.
-    }
+  if (booking) {
+    await reconcileUserBookingsWithCalendar(req.user?.email || 'unknown', 120);
+    booking = getUserBookingDetail(bookingId, req.user?.email || 'unknown');
   }
 
   if (!booking) {

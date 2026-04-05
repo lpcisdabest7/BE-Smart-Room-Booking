@@ -1,5 +1,12 @@
 import { randomUUID } from 'crypto';
-import { buildRoomBookingLink, cancelRoomCalendarEvent, createRoomCalendarEvent, resolveCalendarIdForRoom, updateRoomCalendarEvent } from './google-calendar.service';
+import {
+  buildRoomBookingLink,
+  cancelRoomCalendarEvent,
+  createRoomCalendarEvent,
+  getRoomCalendarEvent,
+  resolveCalendarIdForRoom,
+  updateRoomCalendarEvent,
+} from './google-calendar.service';
 import { all, get, nowIso, run } from './database.service';
 import { bootstrapRoomProjection, getProjectedConflictingEvents, listProjectedCalendarEvents, upsertCalendarEventProjection } from './calendar-sync.service';
 import { getRoomCatalogEntry, seedRoomCatalog } from './room-catalog.service';
@@ -176,6 +183,161 @@ export function getAllBookings(limit = 100): BookingRecordV2[] {
 
 export function listBookings(options: { userEmail: string; status?: BookingStatus; limit?: number }): BookingRecordV2[] {
   return getBookingsByUser(options.userEmail, { status: options.status, limit: options.limit });
+}
+
+function normalizeCalendarEventDate(input?: { dateTime?: string; date?: string }): string | null {
+  if (!input) {
+    return null;
+  }
+  if (typeof input.dateTime === 'string' && input.dateTime) {
+    return new Date(input.dateTime).toISOString();
+  }
+  if (typeof input.date === 'string' && input.date) {
+    return new Date(`${input.date}T00:00:00.000Z`).toISOString();
+  }
+  return null;
+}
+
+export async function reconcileUserBookingsWithCalendar(userEmail: string, limit = 120): Promise<number> {
+  const bookings = getBookingsByUser(userEmail, { limit }).filter(
+    (booking) =>
+      Boolean(booking.externalEventId) &&
+      (booking.status === 'pending' || booking.status === 'confirmed' || booking.status === 'modified' || booking.status === 'sync_error')
+  );
+
+  let changed = 0;
+  const fallbackSyncedRooms = new Set<string>();
+
+  for (const booking of bookings) {
+    if (!booking.externalEventId) {
+      continue;
+    }
+
+    try {
+      const event = await getRoomCalendarEvent({
+        calendarId: booking.calendarId,
+        eventId: booking.externalEventId,
+      });
+
+      const now = nowIso();
+      const cancelledOutside = !event || event.status === 'cancelled';
+
+      if (cancelledOutside) {
+        if (booking.status !== 'cancelled') {
+          run(
+            `
+              UPDATE bookings
+              SET status = 'cancelled',
+                  syncState = 'synced',
+                  updatedAt = ?,
+                  cancelledAt = COALESCE(cancelledAt, ?)
+              WHERE id = ?
+            `,
+            [now, now, booking.id]
+          );
+          changed += 1;
+        }
+
+        upsertCalendarEventProjection({
+          externalEventId: booking.externalEventId,
+          calendarId: booking.calendarId,
+          roomId: booking.roomId,
+          startAt: booking.startAt,
+          endAt: booking.endAt,
+          summary: booking.title,
+          organizer: null,
+          updatedAt: event?.updated ? new Date(event.updated).toISOString() : now,
+          source: 'google_calendar',
+          isDeleted: true,
+          rawJson: event?.rawJson ?? JSON.stringify({ id: booking.externalEventId, status: 'cancelled' }),
+          syncedAt: now,
+        });
+        continue;
+      }
+
+      const nextStartAt = normalizeCalendarEventDate(event.start) ?? booking.startAt;
+      const nextEndAt = normalizeCalendarEventDate(event.end) ?? booking.endAt;
+      const nextTitle = (event.summary || booking.title || '').trim() || booking.title;
+      const nextDuration = Math.max(1, Math.round((new Date(nextEndAt).getTime() - new Date(nextStartAt).getTime()) / 60000));
+      const hasScheduleChanged =
+        nextTitle !== booking.title ||
+        nextStartAt !== booking.startAt ||
+        nextEndAt !== booking.endAt ||
+        nextDuration !== booking.duration;
+
+      const nextStatus: BookingStatus = hasScheduleChanged
+        ? 'modified'
+        : booking.status === 'pending' || booking.status === 'sync_error' || booking.status === 'cancelled'
+          ? 'confirmed'
+          : booking.status;
+
+      if (
+        hasScheduleChanged ||
+        booking.status !== nextStatus ||
+        booking.syncState !== 'synced' ||
+        booking.cancelledAt !== null ||
+        (event.htmlLink ?? booking.calendarLink) !== booking.calendarLink
+      ) {
+        run(
+          `
+            UPDATE bookings
+            SET title = ?,
+                startAt = ?,
+                endAt = ?,
+                duration = ?,
+                status = ?,
+                syncState = 'synced',
+                calendarLink = ?,
+                rawCalendarJson = ?,
+                updatedAt = ?,
+                confirmedAt = COALESCE(confirmedAt, ?),
+                cancelledAt = NULL
+            WHERE id = ?
+          `,
+          [
+            nextTitle,
+            nextStartAt,
+            nextEndAt,
+            nextDuration,
+            nextStatus,
+            event.htmlLink ?? booking.calendarLink,
+            event.rawJson,
+            now,
+            now,
+            booking.id,
+          ]
+        );
+        changed += 1;
+      }
+
+      upsertCalendarEventProjection({
+        externalEventId: booking.externalEventId,
+        calendarId: booking.calendarId,
+        roomId: booking.roomId,
+        startAt: nextStartAt,
+        endAt: nextEndAt,
+        summary: nextTitle,
+        organizer: null,
+        updatedAt: event.updated ? new Date(event.updated).toISOString() : now,
+        source: 'google_calendar',
+        isDeleted: false,
+        rawJson: event.rawJson,
+        syncedAt: now,
+      });
+    } catch {
+      if (fallbackSyncedRooms.has(booking.roomId)) {
+        continue;
+      }
+      fallbackSyncedRooms.add(booking.roomId);
+      try {
+        await bootstrapRoomProjection(booking.roomId);
+      } catch {
+        // Ignore fallback errors to keep read APIs responsive.
+      }
+    }
+  }
+
+  return changed;
 }
 
 export function createBookingRecord(input: BookingCreateInput & {

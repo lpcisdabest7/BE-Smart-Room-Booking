@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { processChat } from '../services/ai.service';
-import { BOOKING_ERROR_CODES, createConfirmedBooking, getUserBookings } from '../services/booking.service';
+import { BOOKING_ERROR_CODES, createConfirmedBooking, getUserBookings, reconcileUserBookingsWithCalendar } from '../services/booking.service';
 import { findAlternativeSlots } from '../services/calendar.service';
 import { bootstrapRoomProjection } from '../services/calendar-sync.service';
 import { getRoomDetail, listCandidateRooms, listRoomsWithStatus } from '../services/room-status.service';
@@ -103,24 +103,8 @@ router.post('/', authMiddleware, async (req: Request, res: Response): Promise<vo
     }
 
     if (aiResponse.action === 'check_booking') {
-      let bookings = getUserBookings(userEmail, 200);
-      const roomIds = Array.from(
-        new Set(
-          bookings
-            .filter((booking) => booking.status === 'pending' || booking.status === 'confirmed' || booking.status === 'modified')
-            .map((booking) => booking.roomId)
-        )
-      );
-
-      for (const roomId of roomIds) {
-        try {
-          await bootstrapRoomProjection(roomId);
-        } catch {
-          // Keep chat responsive even when one room sync fails.
-        }
-      }
-
-      bookings = getUserBookings(userEmail, 200);
+      await reconcileUserBookingsWithCalendar(userEmail, 200);
+      const bookings = getUserBookings(userEmail, 200);
       if (!bookings.length) {
         res.json({ type: 'info', message: 'Bạn chưa có booking nào trong hệ thống.', panelHint: 'none' });
         return;

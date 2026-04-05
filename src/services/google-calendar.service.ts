@@ -204,7 +204,11 @@ async function requestCalendarApi<T>(
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Google Calendar API ${method} ${path} failed: ${response.status} ${text}`);
+    const error = new Error(`Google Calendar API ${method} ${path} failed: ${response.status} ${text}`) as Error & {
+      status?: number;
+    };
+    error.status = response.status;
+    throw error;
   }
 
   return (await response.json()) as T;
@@ -354,6 +358,47 @@ export async function listRoomCalendarEvents(args: {
     maxResults: args.maxResults ?? 250,
     pageToken: args.pageToken,
   });
+}
+
+export async function getRoomCalendarEvent(args: {
+  calendarId: string;
+  eventId: string;
+}): Promise<GoogleCalendarEventRecord | null> {
+  try {
+    const response = await requestCalendarApi<{
+      id: string;
+      htmlLink?: string;
+      status?: string;
+      summary?: string;
+      description?: string;
+      location?: string;
+      start?: { dateTime?: string; date?: string; timeZone?: string };
+      end?: { dateTime?: string; date?: string; timeZone?: string };
+      updated?: string;
+    }>('GET', args.calendarId, `/events/${encodeURIComponent(args.eventId)}`, undefined, {
+      showDeleted: true,
+    });
+
+    return {
+      id: response.id,
+      calendarId: args.calendarId,
+      status: response.status,
+      htmlLink: response.htmlLink,
+      summary: response.summary,
+      description: response.description,
+      location: response.location,
+      start: response.start,
+      end: response.end,
+      updated: response.updated,
+      rawJson: JSON.stringify(response),
+    };
+  } catch (error) {
+    const status = (error as { status?: number } | undefined)?.status;
+    if (status === 404) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 export async function createManagedCalendarEvent(args: {

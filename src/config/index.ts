@@ -10,6 +10,16 @@ function parseNumber(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parseCsv(value: string | undefined): string[] {
+  if (!value) {
+    return [];
+  }
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function getMetadata(roomId: string, roomName: string, capacity: number): RoomMetadata {
   const metadataMap = roomMetadata as Record<string, Partial<RoomMetadata>>;
   const found = metadataMap[roomId] ?? metadataMap[roomName.toLowerCase()];
@@ -51,10 +61,13 @@ function loadRooms(): RoomRecord[] {
 }
 
 const googlePrivateKey = (process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY ?? '').replace(/\\n/g, '\n');
+const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+const frontendOrigins = Array.from(new Set([frontendUrl, ...parseCsv(process.env.FRONTEND_ORIGINS)]));
 
 export const config = {
   port: parseNumber(process.env.PORT, 3001),
-  frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
+  frontendUrl,
+  frontendOrigins,
   jwtSecret: process.env.JWT_SECRET || 'default-secret-change-me',
   openaiApiKey: process.env.OPENAI_API_KEY || '',
   aiModel: process.env.AI_MODEL || 'gpt-4o-mini',
@@ -73,4 +86,3 @@ export const config = {
   },
   rooms: loadRooms(),
 };
-
