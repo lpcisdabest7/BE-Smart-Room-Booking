@@ -104,7 +104,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response): Promise<vo
 
     if (aiResponse.action === 'check_booking') {
       await reconcileUserBookingsWithCalendar(userEmail, 200);
-      const bookings = getUserBookings(userEmail, 200);
+      const bookings = getUserBookings(userEmail, 200).filter((booking) => booking.status !== 'cancelled');
       if (!bookings.length) {
         res.json({ type: 'info', message: 'Bạn chưa có booking nào trong hệ thống.', panelHint: 'none' });
         return;
@@ -160,6 +160,10 @@ router.post('/', authMiddleware, async (req: Request, res: Response): Promise<vo
         });
 
         for (const slot of slots) {
+          if (slot.status === 'cancelled') {
+            continue;
+          }
+
           const start = toAsiaBangkokParts(slot.startAt);
           const end = toAsiaBangkokParts(slot.endAt);
           bookings.push({
@@ -174,7 +178,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response): Promise<vo
             endAt: slot.endAt,
             duration: durationFromSlot(slot.startAt, slot.endAt),
             title: slot.summary || `Lịch phòng ${roomDetail.name}`,
-            status: slot.status === 'cancelled' ? 'cancelled' : 'confirmed',
+            status: 'confirmed',
             createdAt: slot.startAt,
             updatedAt: slot.endAt,
             calendarLink: null,
