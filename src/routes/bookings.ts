@@ -7,6 +7,7 @@ import {
   getUserBookingDetail,
   listBookings,
 } from '../services/booking.service';
+import { bootstrapRoomProjection } from '../services/calendar-sync.service';
 import { formatPublicBooking } from '../services/public-api.service';
 import type { BookingStatus } from '../services/sync.types';
 
@@ -44,7 +45,7 @@ function resolveBookingErrorCode(error: unknown): string {
   return (error as Error & { code?: string }).code || error.name || error.message;
 }
 
-router.get('/', (req: Request, res: Response): void => {
+router.get('/', async (req: Request, res: Response): Promise<void> => {
   const scope = String(req.query.scope ?? 'mine').toLowerCase();
   if (scope !== 'mine') {
     res.status(400).json({ error: 'Chỉ hỗ trợ scope=mine ở phiên bản hiện tại.' });
@@ -52,7 +53,29 @@ router.get('/', (req: Request, res: Response): void => {
   }
 
   const userEmail = req.user?.email || 'unknown';
-  const bookings = listBookings({
+  let bookings = listBookings({
+    userEmail,
+    status: parseStatus(req.query.status),
+    limit: parseLimit(req.query.limit, 30),
+  });
+
+  const roomIds = Array.from(
+    new Set(
+      bookings
+        .filter((booking) => booking.status === 'pending' || booking.status === 'confirmed' || booking.status === 'modified')
+        .map((booking) => booking.roomId)
+    )
+  );
+
+  for (const roomId of roomIds) {
+    try {
+      await bootstrapRoomProjection(roomId);
+    } catch {
+      // Keep endpoint available even when one room fails to sync.
+    }
+  }
+
+  bookings = listBookings({
     userEmail,
     status: parseStatus(req.query.status),
     limit: parseLimit(req.query.limit, 30),
@@ -60,8 +83,18 @@ router.get('/', (req: Request, res: Response): void => {
   res.json({ bookings: bookings.map((booking) => formatPublicBooking(booking)) });
 });
 
-router.get('/:bookingId', (req: Request, res: Response): void => {
-  const booking = getUserBookingDetail(normalizeParam(req.params.bookingId), req.user?.email || 'unknown');
+router.get('/:bookingId', async (req: Request, res: Response): Promise<void> => {
+  const bookingId = normalizeParam(req.params.bookingId);
+  let booking = getUserBookingDetail(bookingId, req.user?.email || 'unknown');
+
+  if (booking && (booking.status === 'pending' || booking.status === 'confirmed' || booking.status === 'modified')) {
+    try {
+      await bootstrapRoomProjection(booking.roomId);
+      booking = getUserBookingDetail(bookingId, req.user?.email || 'unknown');
+    } catch {
+      // Keep response stable with last known booking state.
+    }
+  }
 
   if (!booking) {
     res.status(404).json({ error: 'Không tìm thấy booking.' });
@@ -138,4 +171,3 @@ router.post('/:bookingId/cancel', async (req: Request, res: Response): Promise<v
 });
 
 export default router;
-
