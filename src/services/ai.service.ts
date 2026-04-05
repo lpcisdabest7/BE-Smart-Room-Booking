@@ -12,7 +12,8 @@ function normalizeText(input: string): string {
   return input
     .normalize('NFD')
     .replace(/\p{Diacritic}/gu, '')
-    .replace(/đ/gu, 'd')
+    .replace(/[đĐ]/gu, 'd')
+    .replace(/Ä‘/gu, 'd')
     .toLowerCase()
     .trim();
 }
@@ -32,6 +33,26 @@ function resolveRelativeDate(message: string): string | null {
 
 function resolveTime(message: string): string | null {
   const normalized = normalizeText(message);
+
+  const contextual = normalized.match(
+    /(?:luc|vao|at)\s*(\d{1,2})(?:[:h\.](\d{1,2}))?\s*(sang|chieu|toi|dem|am|pm)?/
+  );
+  if (contextual) {
+    let hour = Number(contextual[1]);
+    const minute = Number(contextual[2] ?? '00');
+    const period = contextual[3] ?? '';
+    if (hour > 23 || minute > 59 || Number.isNaN(hour) || Number.isNaN(minute)) {
+      return null;
+    }
+    if ((period === 'pm' || period === 'chieu' || period === 'toi') && hour < 12) {
+      hour += 12;
+    }
+    if ((period === 'am' || period === 'sang') && hour === 12) {
+      hour = 0;
+    }
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  }
+
   const range = normalized.match(/(\d{1,2})(?:[:h](\d{2}))?\s*(?:-|den|toi)\s*(\d{1,2})(?:[:h](\d{2}))?/);
   if (range) {
     const hour = Number(range[1]);
@@ -51,16 +72,33 @@ function resolveTime(message: string): string | null {
 
 function resolveDuration(message: string): number | null {
   const normalized = normalizeText(message);
-  const hours = normalized.match(/(\d+)\s*(gio|tieng|h)\b/);
+
+  const contextualDuration = normalized.match(
+    /(?:trong vong|trong|keo dai|duration|hop trong|for)\s*(\d+)\s*(gio|tieng|phut|m|h)\b/
+  );
+  if (contextualDuration) {
+    const value = Number(contextualDuration[1]);
+    const unit = contextualDuration[2];
+    if (unit === 'phut' || unit === 'm') return value;
+    return value * 60;
+  }
+
+  const hours = normalized.match(/(\d+)\s*(gio|tieng)\b/);
   if (hours) return Number(hours[1]) * 60;
+
+  const contextualHours = normalized.match(/(?:hop|meeting|keo dai|trong vong)\s*(\d+)\s*h\b/);
+  if (contextualHours) return Number(contextualHours[1]) * 60;
+
   const minutes = normalized.match(/(\d+)\s*(phut|m)\b/);
   if (minutes) return Number(minutes[1]);
+
   const range = normalized.match(/(\d{1,2})(?:[:h](\d{2}))?\s*(?:-|den|toi)\s*(\d{1,2})(?:[:h](\d{2}))?/);
   if (range) {
     const startMinutes = Number(range[1]) * 60 + Number(range[2] ?? '00');
     const endMinutes = Number(range[3]) * 60 + Number(range[4] ?? '00');
     return endMinutes > startMinutes ? endMinutes - startMinutes : null;
   }
+
   return 60;
 }
 
