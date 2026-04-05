@@ -1,5 +1,4 @@
 import express from 'express';
-import cors from 'cors';
 import { config } from './config';
 import authRouter from './routes/auth';
 import chatRouter from './routes/chat';
@@ -17,17 +16,31 @@ const app = express();
 getDatabase();
 seedRoomCatalog();
 
-const corsOptions: cors.CorsOptions = {
-  origin: true,
-  credentials: true,
-  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-  allowedHeaders: '*',
-};
+app.use((req, res, next) => {
+  const origin = req.headers.origin as string | undefined;
 
-app.use(
-  cors(corsOptions)
-);
-app.options(/.*/, cors(corsOptions));
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, ngrok-skip-browser-warning'
+  );
+
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+
+  next();
+});
+
 app.use(
   express.json({
     verify: (req, _res, buffer) => {
