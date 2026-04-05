@@ -4,7 +4,7 @@ import { AIResponse, ChatMessage } from '../types';
 
 const openai = new OpenAI({ apiKey: config.openaiApiKey });
 
-function vnNow() {
+function vnNow(): Date {
   return new Date(Date.now() + 7 * 60 * 60 * 1000);
 }
 
@@ -12,36 +12,83 @@ function normalizeText(input: string): string {
   return input
     .normalize('NFD')
     .replace(/\p{Diacritic}/gu, '')
-    .replace(/[đĐ]/gu, 'd')
-    .replace(/Ä‘/gu, 'd')
+    .replace(/[đĐ]/g, 'd')
     .toLowerCase()
     .trim();
+}
+
+function toIsoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function parseDmyToDate(day: number, month: number, year: number): Date {
+  return new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
 }
 
 function resolveRelativeDate(message: string): string | null {
   const normalized = normalizeText(message);
   const now = vnNow();
-  if (normalized.includes('hom nay') || normalized.includes('today')) {
-    return now.toISOString().slice(0, 10);
+
+  if (/\b(hom nay|today)\b/.test(normalized)) {
+    return toIsoDate(now);
   }
-  if (normalized.includes('ngay mai') || normalized.includes('tomorrow')) {
-    return new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  if (/\b(ngay mai|mai|tomorrow)\b/.test(normalized)) {
+    return toIsoDate(new Date(now.getTime() + 24 * 60 * 60 * 1000));
   }
-  const explicit = normalized.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
-  return explicit?.[1] ?? null;
+
+  if (/\b(ngay kia)\b/.test(normalized)) {
+    return toIsoDate(new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000));
+  }
+
+  const iso = normalized.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
+  if (iso?.[1]) {
+    return iso[1];
+  }
+
+  const dmy = normalized.match(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](20\d{2}))?\b/);
+  if (!dmy) {
+    return null;
+  }
+
+  const day = Number(dmy[1]);
+  const month = Number(dmy[2]);
+  const year = dmy[3] ? Number(dmy[3]) : now.getUTCFullYear();
+  if (day < 1 || day > 31 || month < 1 || month > 12) {
+    return null;
+  }
+
+  return toIsoDate(parseDmyToDate(day, month, year));
 }
 
 function resolveTime(message: string): string | null {
   const normalized = normalizeText(message);
 
   const contextual = normalized.match(
-    /(?:luc|vao|at)\s*(\d{1,2})(?:[:h\.](\d{1,2}))?\s*(sang|chieu|toi|dem|am|pm)?/
+    /(?:luc|vao|at)\s*(\d{1,2})(?:[:h.](\d{1,2}))?\s*(sang|chieu|toi|dem|am|pm)?/
   );
   if (contextual) {
     let hour = Number(contextual[1]);
     const minute = Number(contextual[2] ?? '00');
     const period = contextual[3] ?? '';
-    if (hour > 23 || minute > 59 || Number.isNaN(hour) || Number.isNaN(minute)) {
+    if (Number.isNaN(hour) || Number.isNaN(minute) || hour > 23 || minute > 59) {
+      return null;
+    }
+    if ((period === 'pm' || period === 'chieu' || period === 'toi') && hour < 12) {
+      hour += 12;
+    }
+    if ((period === 'am' || period === 'sang') && hour === 12) {
+      hour = 0;
+    }
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  }
+
+  const withPeriod = normalized.match(/\b(\d{1,2})(?:[:h](\d{1,2}))?\s*(sang|chieu|toi|dem|am|pm)\b/);
+  if (withPeriod) {
+    let hour = Number(withPeriod[1]);
+    const minute = Number(withPeriod[2] ?? '00');
+    const period = withPeriod[3];
+    if (Number.isNaN(hour) || Number.isNaN(minute) || hour > 23 || minute > 59) {
       return null;
     }
     if ((period === 'pm' || period === 'chieu' || period === 'toi') && hour < 12) {
@@ -64,39 +111,47 @@ function resolveTime(message: string): string | null {
 
   const match = normalized.match(/\b(\d{1,2})(?:[:h](\d{2}))?\b/);
   if (!match) return null;
+
   const hour = Number(match[1]);
   const minute = Number(match[2] ?? '00');
   if (hour > 23 || minute > 59) return null;
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
-function resolveDuration(message: string): number | null {
+function resolveDuration(message: string): number {
   const normalized = normalizeText(message);
 
-  const contextualDuration = normalized.match(
-    /(?:trong vong|trong|keo dai|duration|hop trong|for)\s*(\d+)\s*(gio|tieng|phut|m|h)\b/
+  const contextual = normalized.match(
+    /(?:trong vong|trong|keo dai|duration|hop trong|for)\s*(\d+)\s*(gio|tieng|phut|m|p|h)\b/
   );
-  if (contextualDuration) {
-    const value = Number(contextualDuration[1]);
-    const unit = contextualDuration[2];
-    if (unit === 'phut' || unit === 'm') return value;
+  if (contextual) {
+    const value = Number(contextual[1]);
+    const unit = contextual[2];
+    if (!Number.isFinite(value) || value <= 0) {
+      return 60;
+    }
+    if (unit === 'phut' || unit === 'm' || unit === 'p') {
+      return value;
+    }
     return value * 60;
   }
 
   const hours = normalized.match(/(\d+)\s*(gio|tieng)\b/);
   if (hours) return Number(hours[1]) * 60;
 
-  const contextualHours = normalized.match(/(?:hop|meeting|keo dai|trong vong)\s*(\d+)\s*h\b/);
-  if (contextualHours) return Number(contextualHours[1]) * 60;
+  const shortHours = normalized.match(/(?:hop|meeting|keo dai|trong vong)\s*(\d+)\s*h\b/);
+  if (shortHours) return Number(shortHours[1]) * 60;
 
-  const minutes = normalized.match(/(\d+)\s*(phut|m)\b/);
+  const minutes = normalized.match(/(\d+)\s*(phut|m|p)\b/);
   if (minutes) return Number(minutes[1]);
 
   const range = normalized.match(/(\d{1,2})(?:[:h](\d{2}))?\s*(?:-|den|toi)\s*(\d{1,2})(?:[:h](\d{2}))?/);
   if (range) {
     const startMinutes = Number(range[1]) * 60 + Number(range[2] ?? '00');
     const endMinutes = Number(range[3]) * 60 + Number(range[4] ?? '00');
-    return endMinutes > startMinutes ? endMinutes - startMinutes : null;
+    if (endMinutes > startMinutes) {
+      return endMinutes - startMinutes;
+    }
   }
 
   return 60;
@@ -118,9 +173,10 @@ function resolveMonthYear(message: string): { month?: number; year?: number } {
   const normalized = normalizeText(message);
   const monthMatch = normalized.match(/thang\s*(\d{1,2})/);
   const yearMatch = normalized.match(/(20\d{2})/);
+  const now = vnNow();
 
   const month = monthMatch ? Number(monthMatch[1]) : undefined;
-  const year = yearMatch ? Number(yearMatch[1]) : undefined;
+  const year = yearMatch ? Number(yearMatch[1]) : now.getUTCFullYear();
 
   return {
     month: month && month >= 1 && month <= 12 ? month : undefined,
@@ -128,41 +184,54 @@ function resolveMonthYear(message: string): { month?: number; year?: number } {
   };
 }
 
-function isRoomScheduleIntent(normalized: string): boolean {
-  const hasRoomKeyword = /(phong|room)/.test(normalized);
-  const hasScheduleKeyword = /(lich|lich dat|da dat|dat trong thang|thang)/.test(normalized);
-  const asksMine = /(lich cua toi|booking cua toi|check booking cua toi|check lich cua toi)/.test(normalized);
-  return hasRoomKeyword && hasScheduleKeyword && !asksMine;
+function hasBookIntent(normalized: string): boolean {
+  return /(dat phong|dat lich|book phong|book lich|tao booking|tao lich|len lich)/.test(normalized);
+}
+
+function hasSearchIntent(normalized: string): boolean {
+  return /(phong trong|con phong nao|tim phong|check phong|xem phong trong)/.test(normalized);
 }
 
 function parseCommonCommand(message: string): AIResponse | null {
   const normalized = normalizeText(message);
   const date = resolveRelativeDate(message);
   const startTime = resolveTime(message);
-  const duration = resolveDuration(message) ?? 60;
+  const duration = resolveDuration(message);
   const numberOfPeople = resolvePeople(message);
   const roomName = resolveRoomName(message);
   const { month, year } = resolveMonthYear(message);
 
-  if (/(danh sach phong|co may phong|tat ca phong|list phong)/.test(normalized)) {
-    return { action: 'list_rooms', message: 'Đây là danh sách phòng hiện có.' };
+  if (/^(hi|hello|hey|xin chao|chao)(\s|$)/.test(normalized)) {
+    return {
+      action: 'info',
+      message: 'Chào bạn, mình có thể giúp: tìm phòng trống, đặt phòng, kiểm tra lịch phòng và lịch của bạn theo UTC+7.',
+    };
   }
 
-  if (isRoomScheduleIntent(normalized)) {
+  if (/(danh sach phong|co may phong|tat ca phong|list phong)/.test(normalized)) {
+    return { action: 'list_rooms', message: 'Mình sẽ hiển thị danh sách phòng hiện có.' };
+  }
+
+  const roomScheduleIntent =
+    /(phong|room)/.test(normalized) &&
+    /(lich|da dat|dat trong thang|thang|schedule|trong thang)/.test(normalized) &&
+    !/(lich cua toi|booking cua toi)/.test(normalized);
+  if (roomScheduleIntent) {
     return {
       action: 'check_room_schedule',
       params: { roomName, month, year },
-      message: 'Để tôi kiểm tra lịch của phòng.',
+      message: 'Mình sẽ kiểm tra lịch của phòng theo dữ liệu mới nhất.',
     };
   }
 
   if (/(lich cua toi|booking cua toi|kiem tra booking|kiem tra lich|da dat chua|check lich|lich su)/.test(normalized)) {
-    return { action: 'check_booking', message: 'Để tôi kiểm tra lịch của bạn.' };
+    return { action: 'check_booking', message: 'Mình sẽ kiểm tra lịch của bạn theo dữ liệu mới nhất.' };
   }
 
-  if (/(dat phong|book phong|dat giup|dat ngay|book ngay)/.test(normalized)) {
+  const bookIntent = hasBookIntent(normalized);
+  if (bookIntent) {
     if (!date || !startTime) {
-      return { action: 'clarify', message: 'Bạn muốn đặt phòng vào ngày nào và lúc mấy giờ?' };
+      return { action: 'clarify', message: 'Bạn muốn đặt vào ngày nào và lúc mấy giờ?' };
     }
     return {
       action: 'book',
@@ -170,7 +239,8 @@ function parseCommonCommand(message: string): AIResponse | null {
     };
   }
 
-  if (/(phong trong|con phong nao trong|check phong|tim phong|phong nao trong)/.test(normalized)) {
+  const searchIntent = hasSearchIntent(normalized);
+  if (searchIntent) {
     if (!date || !startTime) {
       return { action: 'clarify', message: 'Bạn muốn kiểm tra phòng vào ngày nào và lúc mấy giờ?' };
     }
@@ -188,102 +258,187 @@ function buildSystemPrompt(): string {
   const roomsInfo = config.rooms.map((room) => `- ${room.name}: tối đa ${room.capacity} người (id: ${room.id})`).join('\n');
 
   return `Bạn là trợ lý đặt phòng họp cho Apero.
-Hôm nay là ${now.toISOString().slice(0, 10)}, giờ hiện tại là ${now.toISOString().slice(11, 16)} (GMT+7).
+Hôm nay là ${toIsoDate(now)}, giờ hiện tại ${now.toISOString().slice(11, 16)} (UTC+7).
 
 Danh sách phòng:
 ${roomsInfo}
 
-Nhiệm vụ:
-- Nếu người dùng muốn xem phòng trống hoặc kiểm tra phòng: action = "search"
-- Nếu người dùng muốn đặt phòng: action = "book"
-- Nếu người dùng muốn kiểm tra lịch đã đặt của chính họ: action = "check_booking"
-- Nếu người dùng muốn kiểm tra lịch của một phòng: action = "check_room_schedule"
-- Nếu người dùng hỏi danh sách phòng: action = "list_rooms"
-- Nếu thiếu ngày hoặc giờ: action = "clarify"
-
-Luôn trả JSON hợp lệ. Luôn dùng tiếng Việt có dấu.
-Mặc định duration = 60 phút, numberOfPeople = 1.`;
+Trả về JSON hợp lệ, theo format:
+{
+  "action": "search|book|check_booking|check_room_schedule|list_rooms|clarify|info",
+  "message": "câu trả lời tiếng Việt có dấu, tự nhiên, không lặp máy móc",
+  "params": {
+    "roomName": "...",
+    "numberOfPeople": 1,
+    "date": "YYYY-MM-DD",
+    "startTime": "HH:mm",
+    "duration": 60,
+    "month": 4,
+    "year": 2026
+  }
 }
 
-export async function processChat(message: string, conversationHistory: ChatMessage[] = []): Promise<AIResponse> {
-  const quick = parseCommonCommand(message);
-  if (quick) return quick;
+Quy tắc:
+- Nếu user muốn đặt phòng: action=book.
+- Nếu user muốn xem phòng trống theo thời điểm cụ thể: action=search.
+- Nếu user muốn xem lịch phòng theo tháng/ngày: action=check_room_schedule.
+- Nếu user muốn xem lịch của chính họ: action=check_booking.
+- Nếu user đã nêu đủ ngày và giờ thì không được trả clarify.
+- numberOfPeople mặc định 1, duration mặc định 60.
+- Trả lời đúng trọng tâm, có thể kèm 1 câu hướng dẫn bước tiếp theo.`;
+}
 
-  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-    { role: 'system', content: buildSystemPrompt() },
-    ...conversationHistory.map((msg) => ({ role: msg.role as 'user' | 'assistant', content: msg.content })),
-    { role: 'user', content: message },
-  ];
+function coerceAiResponse(raw: unknown, fallback: AIResponse | null): AIResponse | null {
+  if (!raw || typeof raw !== 'object') {
+    return fallback;
+  }
 
-  try {
-    const completion = await openai.chat.completions.create({
-      model: config.aiModel,
-      messages,
-      response_format: { type: 'json_object' },
-      temperature: 0.2,
-      max_tokens: 400,
-    });
+  const payload = raw as Record<string, unknown>;
+  const action = typeof payload.action === 'string' ? payload.action : '';
+  const message = typeof payload.message === 'string' && payload.message.trim() ? payload.message.trim() : undefined;
+  const params = (payload.params && typeof payload.params === 'object' ? payload.params : {}) as Record<string, unknown>;
+  const fallbackBookingParams:
+    | { roomName?: string; numberOfPeople?: number; date?: string; startTime?: string; duration?: number }
+    | undefined =
+    fallback && (fallback.action === 'search' || fallback.action === 'book')
+      ? (fallback.params as { roomName?: string; numberOfPeople?: number; date?: string; startTime?: string; duration?: number })
+      : undefined;
 
-    const content = completion.choices[0]?.message?.content;
-    if (!content) {
-      return { action: 'clarify', message: 'Xin lỗi, tôi chưa hiểu rõ yêu cầu. Bạn có thể nói rõ hơn không?' };
+  if (action === 'list_rooms') {
+    return { action: 'list_rooms', message: message ?? 'Mình sẽ hiển thị danh sách phòng hiện có.' };
+  }
+  if (action === 'check_booking') {
+    return { action: 'check_booking', message: message ?? 'Mình sẽ kiểm tra lịch của bạn.' };
+  }
+  if (action === 'check_room_schedule') {
+    return {
+      action: 'check_room_schedule',
+      params: {
+        roomName: typeof params.roomName === 'string' ? params.roomName : undefined,
+        month: typeof params.month === 'number' ? params.month : undefined,
+        year: typeof params.year === 'number' ? params.year : undefined,
+      },
+      message: message ?? 'Mình sẽ kiểm tra lịch của phòng.',
+    };
+  }
+  if (action === 'clarify') {
+    return { action: 'clarify', message: message ?? 'Bạn có thể nói rõ thêm ngày và giờ được không?' };
+  }
+  if (action === 'info') {
+    return { action: 'info', message: message ?? 'Mình có thể giúp bạn tìm phòng, đặt phòng hoặc kiểm tra lịch.' };
+  }
+  if (action === 'search' || action === 'book') {
+    const bookingAction: 'search' | 'book' = action === 'search' ? 'search' : 'book';
+    const date =
+      typeof params.date === 'string'
+        ? params.date
+        : typeof fallbackBookingParams?.date === 'string'
+          ? fallbackBookingParams.date
+          : undefined;
+    const startTime =
+      typeof params.startTime === 'string'
+        ? params.startTime
+        : typeof fallbackBookingParams?.startTime === 'string'
+          ? fallbackBookingParams.startTime
+          : undefined;
+    if (!date || !startTime) {
+      return fallback ?? { action: 'clarify', message: 'Bạn muốn đặt phòng vào ngày nào và lúc mấy giờ?' };
     }
+    const numberOfPeople =
+      typeof params.numberOfPeople === 'number'
+        ? params.numberOfPeople
+        : typeof fallbackBookingParams?.numberOfPeople === 'number'
+          ? fallbackBookingParams.numberOfPeople
+          : 1;
+    const duration =
+      typeof params.duration === 'number'
+        ? params.duration
+        : typeof fallbackBookingParams?.duration === 'number'
+          ? fallbackBookingParams.duration
+          : 60;
+    const roomName =
+      typeof params.roomName === 'string'
+        ? params.roomName
+        : typeof fallbackBookingParams?.roomName === 'string'
+          ? fallbackBookingParams.roomName
+          : undefined;
 
-    const parsed = JSON.parse(content) as AIResponse;
-    if (parsed.action === 'search' && parsed.params?.date && parsed.params?.startTime) {
+    if (bookingAction === 'search') {
       return {
         action: 'search',
         params: {
-          ...parsed.params,
-          numberOfPeople: parsed.params.numberOfPeople || 1,
-          duration: parsed.params.duration || 60,
+          numberOfPeople,
+          date,
+          startTime,
+          duration,
         },
       };
     }
-    if (parsed.action === 'book' && parsed.params?.date && parsed.params?.startTime) {
-      return {
-        action: 'book',
-        params: {
-          ...parsed.params,
-          numberOfPeople: parsed.params.numberOfPeople || 1,
-          duration: parsed.params.duration || 60,
-        },
-      };
-    }
-    if (parsed.action === 'check_room_schedule') {
-      const loose = parsed as unknown as {
-        params?: { roomName?: string; month?: number; year?: number };
-        roomName?: string;
-        room_name?: string;
-        room?: string;
-        room_id?: string;
-        month?: number;
-        year?: number;
-      };
 
-      const resolvedRoomName =
-        loose.params?.roomName ??
-        loose.roomName ??
-        loose.room_name ??
-        loose.room ??
-        config.rooms.find((room) => room.id === loose.room_id)?.name;
-
-      return {
-        action: 'check_room_schedule',
-        params: {
-          roomName: resolvedRoomName,
-          month: loose.params?.month ?? loose.month,
-          year: loose.params?.year ?? loose.year,
-        },
-        message: 'Để tôi kiểm tra lịch của phòng.',
-      };
-    }
-    if (parsed.action === 'check_booking' || parsed.action === 'list_rooms' || parsed.action === 'info') {
-      return parsed;
-    }
-    return { action: 'clarify', message: 'Bạn muốn xem phòng trống hay đặt phòng?' };
-  } catch (error) {
-    console.error('AI service error:', error);
-    return { action: 'clarify', message: 'Xin lỗi, tôi đang gặp sự cố khi hiểu yêu cầu. Bạn thử lại giúp tôi nhé.' };
+    return {
+      action: 'book',
+      params: {
+        roomName,
+        numberOfPeople,
+        date,
+        startTime,
+        duration,
+      },
+    };
   }
+
+  return fallback;
+}
+
+export async function processChat(message: string, conversationHistory: ChatMessage[] = []): Promise<AIResponse> {
+  const fallback = parseCommonCommand(message);
+  const normalizedInput = normalizeText(message);
+
+  if (config.openaiApiKey) {
+    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+      { role: 'system', content: buildSystemPrompt() },
+      ...conversationHistory.map((msg) => ({ role: msg.role as 'user' | 'assistant', content: msg.content })),
+      { role: 'user', content: message },
+    ];
+
+    try {
+      const completion = await openai.chat.completions.create({
+        model: config.aiModel,
+        messages,
+        response_format: { type: 'json_object' },
+        temperature: 0.3,
+        max_tokens: 500,
+      });
+
+      const content = completion.choices[0]?.message?.content;
+      if (content) {
+        const parsed = JSON.parse(content) as unknown;
+        const coerced = coerceAiResponse(parsed, fallback);
+        if (coerced) {
+          const shouldPreferFallbackFromIntent =
+            fallback &&
+            (fallback.action === 'book' || fallback.action === 'search' || fallback.action === 'check_room_schedule') &&
+            (coerced.action === 'clarify' || coerced.action === 'info');
+          const shouldPreferFallbackBookingAction =
+            fallback && fallback.action === 'book' && hasBookIntent(normalizedInput) && coerced.action === 'search';
+
+          if (shouldPreferFallbackFromIntent || shouldPreferFallbackBookingAction) {
+            return fallback;
+          }
+          return coerced;
+        }
+      }
+    } catch (error) {
+      console.error('AI service error:', error);
+    }
+  }
+
+  if (fallback) {
+    return fallback;
+  }
+
+  return {
+    action: 'clarify',
+    message: 'Mình chưa bắt được ý chính. Bạn muốn tìm phòng trống, đặt phòng hay kiểm tra lịch?',
+  };
 }

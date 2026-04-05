@@ -18,6 +18,7 @@ seedRoomCatalog();
 
 app.use((req, res, next) => {
   const origin = req.headers.origin as string | undefined;
+  const requestedHeaders = req.headers['access-control-request-headers'];
 
   if (origin) {
     res.setHeader('Access-Control-Allow-Origin', origin);
@@ -30,8 +31,12 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept, Authorization, ngrok-skip-browser-warning'
+    typeof requestedHeaders === 'string' && requestedHeaders.trim()
+      ? requestedHeaders
+      : 'Origin, X-Requested-With, Content-Type, Accept, Authorization, ngrok-skip-browser-warning'
   );
+  res.setHeader('Access-Control-Expose-Headers', '*');
+  res.setHeader('Access-Control-Max-Age', '86400');
 
   if (req.method === 'OPTIONS') {
     res.status(204).end();
@@ -72,6 +77,8 @@ app.listen(config.port, () => {
   console.log(`Loaded ${config.rooms.length} room(s)`);
   if (!config.openaiApiKey) {
     console.warn('WARNING: OPENAI_API_KEY is not set');
+  } else {
+    console.log(`AI model in use: ${config.aiModel}`);
   }
 });
 
