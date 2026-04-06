@@ -1,0 +1,6 @@
+{"t":0,"agent":"system","event":"keyword_detected","keyword":"deep-interview"}
+{"t":0,"agent":"a949b92","agent_type":"explore","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"a949b92","agent_type":"explore","event":"agent_stop","success":true,"duration_ms":52239}
+{"t":0,"agent":"system","event":"skill_invoked","skill_name":"oh-my-claudecode:autopilot"}
+{"t":0,"agent":"a971b62","agent_type":"code-reviewer","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"a971b62","agent_type":"code-reviewer","event":"agent_stop","success":true,"duration_ms":64104}

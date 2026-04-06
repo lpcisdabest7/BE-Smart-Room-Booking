@@ -78,54 +78,142 @@ export async function findAlternativeSlots(
   durationMinutes: number,
   targetPeople = 1
 ): Promise<AlternativeSlot[]> {
-  const offsets = [-30, 30];
-  const alternatives: AlternativeSlot[] = [];
+  const now = new Date();
+  const durationMs = durationMinutes * 60 * 1000;
 
-  for (const offset of offsets) {
-    const altStart = new Date(originalStart.getTime() + offset * 60 * 1000);
-    const altEnd = new Date(altStart.getTime() + durationMinutes * 60 * 1000);
+  // Search window: same day as originalStart, from now (or day start) to end of day
+  const dayStart = new Date(originalStart);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(originalStart);
+  dayEnd.setHours(24, 0, 0, 0); // exclusive midnight — use full day without off-by-1ms
+  const searchFrom = now > dayStart ? now : dayStart;
 
-    // Skip past times
-    if (altStart < new Date()) continue;
+  // For each room, find free gaps and extract candidate start times
+  const roomResults = await Promise.all(
+    rooms.map(async (room) => {
+      const events = await fetchEvents(room.icalLink);
 
-    const results = await Promise.all(
-      rooms.map((room) => checkRoomAvailability(room, altStart, altEnd))
-    );
+      // Keep only events that intersect the search window
+      const dayEvents = events
+        .filter((e) => e.end > searchFrom && e.start < dayEnd)
+        .sort((a, b) => a.start.getTime() - b.start.getTime());
 
-    const availableRooms: RoomPublic[] = results
-      .filter((r) => r.available)
-      .map((r) => ({
-        id: r.room.id,
-        name: r.room.name,
-        capacity: r.room.capacity,
-        floor: r.room.floor,
-        description: r.room.description,
-        equipment: r.room.equipment,
-        image: r.room.image,
-        color: r.room.color,
-        features: r.room.features,
-      }))
-      .sort((a, b) => {
-        const capacityDistance = Math.abs(a.capacity - targetPeople) - Math.abs(b.capacity - targetPeople);
-        if (capacityDistance !== 0) {
-          return capacityDistance;
+      // Build free gaps by scanning through sorted events
+      const gaps: { start: Date; end: Date }[] = [];
+      let cursor = searchFrom;
+      for (const event of dayEvents) {
+        if (event.start > cursor) {
+          gaps.push({ start: new Date(cursor), end: event.start });
         }
-        if (a.capacity !== b.capacity) {
-          return a.capacity - b.capacity;
+        if (event.end > cursor) {
+          cursor = event.end;
         }
-        return a.name.localeCompare(b.name);
-      });
+      }
+      if (cursor < dayEnd) {
+        gaps.push({ start: new Date(cursor), end: dayEnd });
+      }
 
-    if (availableRooms.length > 0) {
-      alternatives.push({
-        startTime: altStart,
-        endTime: altEnd,
-        availableRooms,
-      });
+      // From each gap wide enough to fit the duration, pick candidate start times
+      const candidates: Date[] = [];
+      for (const gap of gaps) {
+        const gapMs = gap.end.getTime() - gap.start.getTime();
+        if (gapMs < durationMs) continue;
+
+        // Latest possible start so the slot still fits inside the gap
+        const latestStart = new Date(gap.end.getTime() - durationMs);
+
+        // Closest start to originalStart that fits within [gap.start, latestStart]
+        const clamped = new Date(
+          Math.max(gap.start.getTime(), Math.min(originalStart.getTime(), latestStart.getTime()))
+        );
+        if (clamped >= now) candidates.push(clamped);
+
+        // Gap start (gives a "before" alternative when gap precedes originalStart)
+        if (gap.start >= now && gap.start.getTime() !== clamped.getTime()) {
+          candidates.push(gap.start);
+        }
+
+        // Latest start in gap (gives an "after" alternative when gap follows originalStart)
+        if (
+          latestStart >= now &&
+          latestStart.getTime() !== clamped.getTime() &&
+          latestStart.getTime() !== gap.start.getTime()
+        ) {
+          candidates.push(latestStart);
+        }
+
+        // "Ends exactly at originalStart" — nearest before slot
+        const endsAtOriginal = new Date(originalStart.getTime() - durationMs);
+        if (
+          endsAtOriginal >= gap.start &&
+          endsAtOriginal <= latestStart &&
+          endsAtOriginal >= now &&
+          endsAtOriginal.getTime() !== clamped.getTime()
+        ) {
+          candidates.push(endsAtOriginal);
+        }
+
+        // "Starts exactly at originalStart" — nearest after slot
+        if (
+          originalStart >= gap.start &&
+          originalStart <= latestStart &&
+          originalStart >= now &&
+          originalStart.getTime() !== clamped.getTime()
+        ) {
+          candidates.push(new Date(originalStart));
+        }
+      }
+
+      const roomPublic: RoomPublic = {
+        id: room.id,
+        name: room.name,
+        capacity: room.capacity,
+        floor: room.floor,
+        description: room.description,
+        equipment: room.equipment,
+        image: room.image,
+        color: room.color,
+        features: room.features,
+      };
+
+      return { roomPublic, candidates };
+    })
+  );
+
+  // Aggregate candidates: group by start time, collect all available rooms per slot
+  const slotMap = new Map<number, { altStart: Date; altEnd: Date; rooms: RoomPublic[] }>();
+  for (const { roomPublic, candidates } of roomResults) {
+    for (const altStart of candidates) {
+      const key = altStart.getTime();
+      if (!slotMap.has(key)) {
+        slotMap.set(key, { altStart, altEnd: new Date(altStart.getTime() + durationMs), rooms: [] });
+      }
+      slotMap.get(key)!.rooms.push(roomPublic);
     }
   }
 
-  return alternatives;
+  // Sort slots by proximity to originalStart, sort rooms within each slot by capacity fit
+  return Array.from(slotMap.values())
+    .map((slot) => ({
+      ...slot,
+      rooms: slot.rooms.sort((a, b) => {
+        const capacityDistance = Math.abs(a.capacity - targetPeople) - Math.abs(b.capacity - targetPeople);
+        if (capacityDistance !== 0) return capacityDistance;
+        if (a.capacity !== b.capacity) return a.capacity - b.capacity;
+        return a.name.localeCompare(b.name);
+      }),
+    }))
+    .sort(
+      (a, b) =>
+        Math.abs(a.altStart.getTime() - originalStart.getTime()) -
+        Math.abs(b.altStart.getTime() - originalStart.getTime())
+    )
+    .slice(0, 5)
+    .map((slot) => ({
+      startTime: slot.altStart,
+      endTime: slot.altEnd,
+      availableRooms: slot.rooms,
+    }));
 }
 
 export function generateBookingLink(

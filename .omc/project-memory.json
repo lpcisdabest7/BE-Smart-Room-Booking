@@ -1,0 +1,245 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1775467950748,
+  "projectRoot": "/home/cuonglp/apero/BE-Smart-Room-Booking",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "express",
+        "version": "5.2.1",
+        "category": "backend"
+      }
+    ],
+    "packageManager": "yarn",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "yarn build",
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": "yarn dev",
+    "scripts": {
+      "dev": "nodemon --exec ts-node src/app.ts",
+      "build": "tsc",
+      "start": "node dist/app.js"
+    }
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": "ES modules",
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "src"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "data": {
+      "path": "data",
+      "purpose": "Data files",
+      "fileCount": 1,
+      "lastAccessed": 1775467950733,
+      "keyFiles": [
+        "smart-room-booking.sqlite"
+      ]
+    },
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 4,
+      "lastAccessed": 1775467950733,
+      "keyFiles": [
+        "app.d.ts",
+        "app.d.ts.map",
+        "app.js",
+        "app.js.map"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1775467950737,
+      "keyFiles": [
+        "requirements-smart-room-booking.md"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 1,
+      "lastAccessed": 1775467950739,
+      "keyFiles": [
+        "app.ts"
+      ]
+    },
+    "dist/config": {
+      "path": "dist/config",
+      "purpose": "Configuration files",
+      "fileCount": 4,
+      "lastAccessed": 1775467950741,
+      "keyFiles": [
+        "index.d.ts",
+        "index.d.ts.map",
+        "index.js"
+      ]
+    },
+    "dist/middleware": {
+      "path": "dist/middleware",
+      "purpose": "Middleware",
+      "fileCount": 4,
+      "lastAccessed": 1775467950742,
+      "keyFiles": [
+        "auth.d.ts",
+        "auth.d.ts.map",
+        "auth.js"
+      ]
+    },
+    "dist/routes": {
+      "path": "dist/routes",
+      "purpose": "Route handlers",
+      "fileCount": 28,
+      "lastAccessed": 1775467950742,
+      "keyFiles": [
+        "auth.d.ts",
+        "auth.d.ts.map",
+        "auth.js"
+      ]
+    },
+    "src/config": {
+      "path": "src/config",
+      "purpose": "Configuration files",
+      "fileCount": 1,
+      "lastAccessed": 1775467950746,
+      "keyFiles": [
+        "index.ts"
+      ]
+    },
+    "src/middleware": {
+      "path": "src/middleware",
+      "purpose": "Middleware",
+      "fileCount": 1,
+      "lastAccessed": 1775467950746,
+      "keyFiles": [
+        "auth.ts"
+      ]
+    },
+    "src/routes": {
+      "path": "src/routes",
+      "purpose": "Route handlers",
+      "fileCount": 7,
+      "lastAccessed": 1775467950746,
+      "keyFiles": [
+        "auth.ts",
+        "booking.ts",
+        "bookings.ts"
+      ]
+    },
+    "src/services": {
+      "path": "src/services",
+      "purpose": "Business logic services",
+      "fileCount": 18,
+      "lastAccessed": 1775467950746,
+      "keyFiles": [
+        "ai.service.ts",
+        "booking.service.ts",
+        "booking.store.ts"
+      ]
+    },
+    "src/types": {
+      "path": "src/types",
+      "purpose": "Type definitions",
+      "fileCount": 2,
+      "lastAccessed": 1775467950747,
+      "keyFiles": [
+        "index.ts",
+        "service-compat.d.ts"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/services/calendar.service.ts",
+      "accessCount": 6,
+      "lastAccessed": 1775468418964,
+      "type": "file"
+    },
+    {
+      "path": "src/services/booking.service.ts",
+      "accessCount": 3,
+      "lastAccessed": 1775468004901,
+      "type": "file"
+    },
+    {
+      "path": "src/services/ai.service.ts",
+      "accessCount": 3,
+      "lastAccessed": 1775468021579,
+      "type": "file"
+    },
+    {
+      "path": "src/services/calendar-sync.service.ts",
+      "accessCount": 2,
+      "lastAccessed": 1775468011961,
+      "type": "file"
+    },
+    {
+      "path": "src",
+      "accessCount": 2,
+      "lastAccessed": 1775468012436,
+      "type": "directory"
+    },
+    {
+      "path": "src/types/index.ts",
+      "accessCount": 2,
+      "lastAccessed": 1775468021148,
+      "type": "file"
+    },
+    {
+      "path": "src/routes/chat.ts",
+      "accessCount": 1,
+      "lastAccessed": 1775467994268,
+      "type": "file"
+    },
+    {
+      "path": "src/services/room-status.service.ts",
+      "accessCount": 1,
+      "lastAccessed": 1775467997852,
+      "type": "file"
+    },
+    {
+      "path": "src/routes/booking.ts",
+      "accessCount": 1,
+      "lastAccessed": 1775468005640,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
