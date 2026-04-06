@@ -75,9 +75,10 @@ export async function checkAllRooms(
 export async function findAlternativeSlots(
   rooms: RoomRecord[],
   originalStart: Date,
-  durationMinutes: number
+  durationMinutes: number,
+  targetPeople = 1
 ): Promise<AlternativeSlot[]> {
-  const offsets = [-30, -15, 15, 30]; // minutes
+  const offsets = [-30, 30];
   const alternatives: AlternativeSlot[] = [];
 
   for (const offset of offsets) {
@@ -103,7 +104,17 @@ export async function findAlternativeSlots(
         image: r.room.image,
         color: r.room.color,
         features: r.room.features,
-      }));
+      }))
+      .sort((a, b) => {
+        const capacityDistance = Math.abs(a.capacity - targetPeople) - Math.abs(b.capacity - targetPeople);
+        if (capacityDistance !== 0) {
+          return capacityDistance;
+        }
+        if (a.capacity !== b.capacity) {
+          return a.capacity - b.capacity;
+        }
+        return a.name.localeCompare(b.name);
+      });
 
     if (availableRooms.length > 0) {
       alternatives.push({

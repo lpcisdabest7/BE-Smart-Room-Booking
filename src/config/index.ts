@@ -1,9 +1,28 @@
 import dotenv from 'dotenv';
+import { readFileSync } from 'fs';
 import path from 'path';
-import roomMetadata from '../data/rooms.metadata.json';
 import { RoomConfig, RoomMetadata, RoomRecord } from '../types';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+
+const ROOM_METADATA_FILE = process.env.ROOM_METADATA_PATH || path.resolve(__dirname, '../../data/rooms.metadata.json');
+
+function readRoomMetadataMap(): Record<string, Partial<RoomMetadata>> {
+  try {
+    const raw = readFileSync(ROOM_METADATA_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+      return {};
+    }
+
+    return parsed as Record<string, Partial<RoomMetadata>>;
+  } catch {
+    return {};
+  }
+}
+
+const roomMetadata = readRoomMetadataMap();
 
 function parseNumber(value: string | undefined, fallback: number): number {
   const parsed = value ? Number.parseInt(value, 10) : fallback;
@@ -21,8 +40,7 @@ function parseCsv(value: string | undefined): string[] {
 }
 
 function getMetadata(roomId: string, roomName: string, capacity: number): RoomMetadata {
-  const metadataMap = roomMetadata as Record<string, Partial<RoomMetadata>>;
-  const found = metadataMap[roomId] ?? metadataMap[roomName.toLowerCase()];
+  const found = roomMetadata[roomId] ?? roomMetadata[roomName.toLowerCase()];
 
   return {
     floor: found?.floor ?? 1,

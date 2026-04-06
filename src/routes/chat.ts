@@ -3,8 +3,6 @@ import { authMiddleware } from '../middleware/auth';
 import { processChat } from '../services/ai.service';
 import {
   BOOKING_ERROR_CODES,
-  cancelBookingEvent,
-  createConfirmedBooking,
   getUserBookings,
   reconcileUserBookingsWithCalendar,
 } from '../services/booking.service';
@@ -13,7 +11,7 @@ import { bootstrapRoomProjection } from '../services/calendar-sync.service';
 import { listRoomCatalogEntries } from '../services/room-catalog.service';
 import { formatPublicBooking, formatPublicRoom } from '../services/public-api.service';
 import { getRoomDetail, listCandidateRooms, listRoomsWithStatus } from '../services/room-status.service';
-import { AIBookAction, ChatMessage, RoomAvailability } from '../types';
+import { AIBookAction, ChatMessage } from '../types';
 
 const router = Router();
 
@@ -84,44 +82,53 @@ function toAsiaBangkokParts(isoValue: string): { date: string; time: string } {
   };
 }
 
-function hasTimeOverlap(existingStartAt: string, existingEndAt: string, nextStartAt: string, nextEndAt: string): boolean {
-  const existingStart = new Date(existingStartAt).getTime();
-  const existingEnd = new Date(existingEndAt).getTime();
-  const nextStart = new Date(nextStartAt).getTime();
-  const nextEnd = new Date(nextEndAt).getTime();
-  return existingStart < nextEnd && nextStart < existingEnd;
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function isActiveBookingStatus(status: string): boolean {
-  return status === 'pending' || status === 'confirmed' || status === 'modified' || status === 'sync_error';
-}
-
-function isRoomChangeIntent(message: string, conversationHistory: ConversationItem[]): boolean {
-  const current = normalizeText(message);
-  const roomChangePattern =
-    /(doi phong|doi sang phong|chuyen phong|sang phong|phong rong hon|rong hon|room lon hon|room khac|chuyen sang)/;
-  if (roomChangePattern.test(current)) {
-    return true;
-  }
-
-  const recentUserWantsChange = conversationHistory
-    .slice(-8)
-    .reverse()
-    .find((item) => item.role === 'user' && typeof item.content === 'string' && roomChangePattern.test(normalizeText(item.content)));
-
-  if (!recentUserWantsChange) {
+function hasExplicitRoomMention(message: string, roomName?: string): boolean {
+  if (!roomName) {
     return false;
   }
 
-  const assistantAskedTargetRoom = conversationHistory.slice(-6).some((item) => {
-    if (item.role !== 'assistant' || typeof item.content !== 'string') {
-      return false;
-    }
-    const text = normalizeText(item.content);
-    return /(doi sang phong nao|chon phong|co the chon phong|ban muon doi sang phong nao)/.test(text);
-  });
+  const normalizedMessage = normalizeText(message);
+  const normalizedRoomName = normalizeText(roomName);
+  if (!normalizedRoomName) {
+    return false;
+  }
 
-  return assistantAskedTargetRoom;
+  const mentionPattern = new RegExp(`(?:^|[^a-z0-9])${escapeRegex(normalizedRoomName)}(?:$|[^a-z0-9])`);
+  return mentionPattern.test(normalizedMessage);
+}
+
+function sortAvailableRoomsByFit<T extends { room: { name: string; capacity: number }; available: boolean }>(
+  candidates: T[],
+  targetPeople: number
+): T[] {
+  return candidates
+    .filter((item) => item.available)
+    .sort((a, b) => {
+      const capacityDistance = Math.abs(a.room.capacity - targetPeople) - Math.abs(b.room.capacity - targetPeople);
+      if (capacityDistance !== 0) {
+        return capacityDistance;
+      }
+
+      if (a.room.capacity !== b.room.capacity) {
+        return a.room.capacity - b.room.capacity;
+      }
+
+      return a.room.name.localeCompare(b.room.name);
+    });
+}
+
+function buildNoAvailabilityAlternatives(
+  alternatives: Awaited<ReturnType<typeof findAlternativeSlots>>
+): Array<{ startTime: string; endTime: string; rooms: ReturnType<typeof formatPublicRoom>[] }> {
+  return alternatives.map((alt) => ({
+    startTime: alt.startTime.toISOString(),
+    endTime: alt.endTime.toISOString(),
+    rooms: alt.availableRooms.map((room) => formatPublicRoom(room)),
+  }));
 }
 
 function sanitizeConversationHistory(rawHistory: unknown): ChatMessage[] {
@@ -144,7 +151,6 @@ router.post('/', authMiddleware, async (req: Request, res: Response): Promise<vo
   try {
     const { message, conversationHistory = [] } = req.body as { message?: string; conversationHistory?: ConversationItem[] };
     const userEmail = req.user?.email || 'unknown';
-    const userName = req.user?.name || 'Unknown';
 
     if (!message) {
       res.status(400).json({ error: 'Message là bắt buộc.' });
@@ -284,99 +290,46 @@ router.post('/', authMiddleware, async (req: Request, res: Response): Promise<vo
       const endDateTime = new Date(startDateTime.getTime() + duration * 60 * 1000);
       const candidates = await listCandidateRooms(numberOfPeople, startDateTime.toISOString(), endDateTime.toISOString());
 
-      let selectedRoom: RoomAvailability | undefined;
-      if (roomName) {
-        selectedRoom = candidates.find(
-          (item) => item.available && item.room.name.toLowerCase() === roomName.toLowerCase()
-        );
-      } else {
-        const availableRooms = candidates
-          .filter((item) => item.available)
-          .sort((a, b) => a.room.capacity - b.room.capacity)
-          .slice(0, 3);
+      const availableRooms = sortAvailableRoomsByFit(candidates, numberOfPeople);
+      const hasExplicitRoom = hasExplicitRoomMention(message, roomName);
 
-        if (availableRooms.length) {
+      if (hasExplicitRoom && roomName) {
+        const requestedRoom = availableRooms.find((item) => normalizeText(item.room.name) === normalizeText(roomName));
+        if (requestedRoom) {
           res.json({
             type: 'rooms_available',
-            message: `Tôi tìm thấy ${availableRooms.length} phòng phù hợp. Hãy chọn một phòng để đặt.`,
-            rooms: availableRooms.map((item) => formatPublicRoom(item.room)),
+            message: `Phòng ${requestedRoom.room.name} đang trống. Bạn hãy xác nhận để tạo booking.`,
+            rooms: [formatPublicRoom(requestedRoom.room)],
             searchParams: { numberOfPeople, date, startTime, duration },
             panelHint: 'none',
           });
           return;
         }
-      }
-
-      if (!selectedRoom) {
-        const alternatives = await findAlternativeSlots(
-          listRoomCatalogEntries().filter((room) => room.capacity >= numberOfPeople),
-          startDateTime,
-          duration
-        );
-
+      } else if (availableRooms.length > 0) {
+        const topRooms = availableRooms.slice(0, 3);
         res.json({
-          type: 'no_availability',
-          message: `Không có phòng trống đúng yêu cầu vào ${startTime} ngày ${date}. Đây là một số khung giờ thay thế.`,
-          alternatives: alternatives.map((alt) => ({
-            startTime: alt.startTime.toISOString(),
-            endTime: alt.endTime.toISOString(),
-            rooms: alt.availableRooms.map((room) => formatPublicRoom(room)),
-          })),
+          type: 'rooms_available',
+          message: `Tôi tìm thấy ${topRooms.length} phòng phù hợp. Hãy chọn một phòng để xác nhận booking.`,
+          rooms: topRooms.map((item) => formatPublicRoom(item.room)),
+          searchParams: { numberOfPeople, date, startTime, duration },
           panelHint: 'none',
         });
         return;
       }
 
-      await reconcileUserBookingsWithCalendar(userEmail, 120);
-      const overlappingBookings = getUserBookings(userEmail, 200).filter(
-        (booking) =>
-          isActiveBookingStatus(booking.status) &&
-          hasTimeOverlap(booking.startAt, booking.endAt, startDateTime.toISOString(), endDateTime.toISOString())
+      const alternatives = await findAlternativeSlots(
+        listRoomCatalogEntries().filter((room) => room.capacity >= numberOfPeople),
+        startDateTime,
+        duration,
+        numberOfPeople
       );
 
-      const sameRoomBooking = overlappingBookings.find((booking) => booking.roomId === selectedRoom?.room.id);
-      if (sameRoomBooking) {
-        res.status(409).json({
-          error: `Bạn đã có booking ở phòng ${selectedRoom.room.name} trong khung giờ này.`,
-        });
-        return;
-      }
-
-      if (overlappingBookings.length > 0) {
-        const shouldReplace = isRoomChangeIntent(message, conversationHistory);
-        if (!shouldReplace) {
-          res.status(409).json({
-            error: 'Bạn đã có booking trùng giờ. Nếu muốn đổi phòng, hãy nhắn: "đổi sang phòng US".',
-          });
-          return;
-        }
-
-        for (const oldBooking of overlappingBookings) {
-          await cancelBookingEvent(oldBooking.id);
-        }
-      }
-
-      const booking = await createConfirmedBooking({
-        roomId: selectedRoom.room.id,
-        date,
-        startTime,
-        duration,
-        userEmail,
-        userName,
-        title: `Họp - ${userName}`,
-      });
-
       res.json({
-        type: 'booking_confirmed',
-        message:
-          overlappingBookings.length > 0
-            ? `Đã đổi phòng sang ${selectedRoom.room.name} thành công và hủy booking cũ cùng khung giờ.`
-            : `Đã đặt phòng ${selectedRoom.room.name} thành công.`,
-        booking: formatPublicBooking(booking),
-        bookingId: booking.id,
-        roomId: booking.roomId,
-        roomSnapshot: formatPublicRoom(selectedRoom.room),
-        status: booking.status,
+        type: 'no_availability',
+        message: hasExplicitRoom && roomName
+          ? `Phòng ${roomName} chưa trống vào ${startTime} ngày ${date}. Đây là các lựa chọn trước/sau 30 phút.`
+          : `Không có phòng trống đúng yêu cầu vào ${startTime} ngày ${date}. Đây là các lựa chọn trước/sau 30 phút.`,
+        alternatives: buildNoAvailabilityAlternatives(alternatives),
         panelHint: 'none',
       });
       return;
@@ -387,10 +340,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response): Promise<vo
       const startDateTime = buildDateTime(date, startTime);
       const endDateTime = new Date(startDateTime.getTime() + duration * 60 * 1000);
       const results = await listCandidateRooms(numberOfPeople, startDateTime.toISOString(), endDateTime.toISOString());
-      const availableRooms = results
-        .filter((item) => item.available)
-        .sort((a, b) => a.room.capacity - b.room.capacity)
-        .slice(0, 3);
+      const availableRooms = sortAvailableRoomsByFit(results, numberOfPeople).slice(0, 3);
 
       if (availableRooms.length) {
         res.json({
@@ -406,17 +356,14 @@ router.post('/', authMiddleware, async (req: Request, res: Response): Promise<vo
       const alternatives = await findAlternativeSlots(
         listRoomCatalogEntries().filter((room) => room.capacity >= numberOfPeople),
         startDateTime,
-        duration
+        duration,
+        numberOfPeople
       );
 
       res.json({
         type: 'no_availability',
         message: `Chưa có phòng trống vào ${startTime} ngày ${date}.`,
-        alternatives: alternatives.map((alt) => ({
-          startTime: alt.startTime.toISOString(),
-          endTime: alt.endTime.toISOString(),
-          rooms: alt.availableRooms.map((room) => formatPublicRoom(room)),
-        })),
+        alternatives: buildNoAvailabilityAlternatives(alternatives),
         panelHint: 'none',
       });
       return;

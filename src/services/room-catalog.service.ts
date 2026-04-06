@@ -9,16 +9,31 @@ interface RoomMetadataFileEntry extends RoomMetadata {
   roomId: string;
 }
 
-const METADATA_FILE = path.resolve(__dirname, 'data', 'rooms.metadata.json');
+const METADATA_FILE = process.env.ROOM_METADATA_PATH || path.resolve(__dirname, '../../data/rooms.metadata.json');
 
 function readMetadataFile(): RoomMetadataFileEntry[] {
   try {
     const raw = readFileSync(METADATA_FILE, 'utf8');
-    const parsed = JSON.parse(raw) as RoomMetadataFileEntry[];
-    if (!Array.isArray(parsed)) {
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (Array.isArray(parsed)) {
+      return parsed.filter(
+        (entry): entry is RoomMetadataFileEntry =>
+          typeof entry === 'object' && entry !== null && typeof entry.roomId === 'string'
+      );
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
       return [];
     }
-    return parsed.filter((entry) => typeof entry.roomId === 'string');
+
+    return Object.entries(parsed).flatMap(([roomId, metadata]) => {
+      if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+        return [];
+      }
+
+      return [{ roomId, ...(metadata as Omit<RoomMetadataFileEntry, 'roomId'>) }];
+    });
   } catch {
     return [];
   }
@@ -329,4 +344,3 @@ export function updateRoomSyncState(
 
   run(`UPDATE room_sync_state SET ${updates.join(', ')} WHERE roomId = ?`, params);
 }
-

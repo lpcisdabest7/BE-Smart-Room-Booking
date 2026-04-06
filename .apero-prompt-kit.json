@@ -1,0 +1,100 @@
+{
+  "version": "0.0.3",
+  "environments": [
+    "claude",
+    "codex"
+  ],
+  "phases": [
+    "requirements",
+    "design",
+    "planning",
+    "implementation",
+    "testing",
+    "deployment",
+    "monitoring"
+  ],
+  "createdAt": "2026-04-06T02:23:05.006Z",
+  "updatedAt": "2026-04-06T02:27:46.064Z",
+  "skills": [
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "new-ai-module"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "backend-development"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "strapi-v5"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "brainstorming"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "capture-knowledge"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "debug"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "dev-lifecycle"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "memory"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "multi-agent-brainstorming"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "project-index"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "readme-improvement"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "simplify-implementation"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "technical-writer"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "docs-seeker"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "project-checklist"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "frontend-design"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "frontend-development"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "frontend-design-pro"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "ui-ux-pro-max"
+    },
+    {
+      "registry": "Apero-SaaS/Apero-Skill",
+      "name": "ui-styling"
+    }
+  ]
+}
