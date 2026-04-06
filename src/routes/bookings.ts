@@ -45,6 +45,19 @@ function resolveBookingErrorCode(error: unknown): string {
   return (error as Error & { code?: string }).code || error.name || error.message;
 }
 
+function toIsoValue(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) {
+    return null;
+  }
+
+  const normalized = new Date(value);
+  if (Number.isNaN(normalized.getTime())) {
+    return null;
+  }
+
+  return normalized.toISOString();
+}
+
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   const scope = String(req.query.scope ?? 'mine').toLowerCase();
   if (scope !== 'mine') {
@@ -87,17 +100,31 @@ router.get('/:bookingId', async (req: Request, res: Response): Promise<void> => 
 
 router.post('/', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { roomId, date, startTime, duration, title } = req.body;
-    if (!roomId || !date || !startTime || !duration) {
-      res.status(400).json({ error: 'Thiếu thông tin đặt phòng.' });
+    const { roomId, title } = req.body as {
+      roomId?: string;
+      title?: string;
+      startAt?: unknown;
+      endAt?: unknown;
+    };
+    const startAt = toIsoValue((req.body as { startAt?: unknown }).startAt);
+    const endAt = toIsoValue((req.body as { endAt?: unknown }).endAt);
+
+    if (!roomId || !startAt || !endAt) {
+      res.status(400).json({ error: 'Thiếu thông tin đặt phòng (roomId, startAt, endAt).' });
+      return;
+    }
+
+    const duration = Math.round((new Date(endAt).getTime() - new Date(startAt).getTime()) / 60000);
+    if (!Number.isFinite(duration) || duration <= 0) {
+      res.status(400).json({ error: 'Khung giờ không hợp lệ: endAt phải lớn hơn startAt.' });
       return;
     }
 
     const booking = await createConfirmedBooking({
       roomId,
-      date,
-      startTime,
-      duration: Number(duration),
+      startAt,
+      endAt,
+      duration,
       title,
       userEmail: req.user?.email || 'unknown',
       userName: req.user?.name || 'Unknown',

@@ -25,6 +25,24 @@ function parseDmyToDate(day: number, month: number, year: number): Date {
   return new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
 }
 
+function resolveWeekday(normalized: string): number | null {
+  if (/\b(cn|chu nhat)\b/.test(normalized)) {
+    return 0;
+  }
+
+  const thuMatch = normalized.match(/\bthu\s*([2-7])\b/);
+  if (thuMatch) {
+    return Number(thuMatch[1]) - 1;
+  }
+
+  const shortMatch = normalized.match(/\bt\s*([2-7])\b/);
+  if (shortMatch) {
+    return Number(shortMatch[1]) - 1;
+  }
+
+  return null;
+}
+
 function resolveRelativeDate(message: string): string | null {
   const normalized = normalizeText(message);
   const now = vnNow();
@@ -39,6 +57,17 @@ function resolveRelativeDate(message: string): string | null {
 
   if (/\b(ngay kia)\b/.test(normalized)) {
     return toIsoDate(new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000));
+  }
+
+  const weekday = resolveWeekday(normalized);
+  if (weekday !== null) {
+    const todayWeekday = now.getUTCDay();
+    let dayOffset = (weekday - todayWeekday + 7) % 7;
+    const hasNextWeekHint = /\b(tuan sau|tuan toi|next week)\b/.test(normalized);
+    if (hasNextWeekHint) {
+      dayOffset += 7;
+    }
+    return toIsoDate(new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000));
   }
 
   const iso = normalized.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
@@ -109,7 +138,32 @@ function resolveTime(message: string): string | null {
     }
   }
 
-  const match = normalized.match(/\b(\d{1,2})(?:[:h](\d{2}))?\b/);
+  const explicit = normalized.match(/\b(\d{1,2})(?:[:h](\d{1,2}))\b/);
+  if (explicit) {
+    const hour = Number(explicit[1]);
+    const minute = Number(explicit[2] ?? '00');
+    if (hour <= 23 && minute <= 59) {
+      return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    }
+  }
+
+  const hourOnly = normalized.match(/\b(\d{1,2})\s*h\b/);
+  if (hourOnly) {
+    const hour = Number(hourOnly[1]);
+    if (hour <= 23) {
+      return `${String(hour).padStart(2, '0')}:00`;
+    }
+  }
+
+  const wordHour = normalized.match(/\b(\d{1,2})\s*(gio|tieng)\b/);
+  if (wordHour) {
+    const hour = Number(wordHour[1]);
+    if (hour <= 23) {
+      return `${String(hour).padStart(2, '0')}:00`;
+    }
+  }
+
+  const match = normalized.match(/\b(\d{1,2})[:h](\d{1,2})\b/);
   if (!match) return null;
 
   const hour = Number(match[1]);
@@ -118,7 +172,7 @@ function resolveTime(message: string): string | null {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
-function resolveDuration(message: string): number {
+function resolveDurationHint(message: string): number | null {
   const normalized = normalizeText(message);
 
   const contextual = normalized.match(
@@ -128,7 +182,7 @@ function resolveDuration(message: string): number {
     const value = Number(contextual[1]);
     const unit = contextual[2];
     if (!Number.isFinite(value) || value <= 0) {
-      return 60;
+      return null;
     }
     if (unit === 'phut' || unit === 'm' || unit === 'p') {
       return value;
@@ -154,13 +208,21 @@ function resolveDuration(message: string): number {
     }
   }
 
-  return 60;
+  return null;
+}
+
+function resolveDuration(message: string): number {
+  return resolveDurationHint(message) ?? 60;
+}
+
+function resolvePeopleHint(message: string): number | null {
+  const normalized = normalizeText(message);
+  const match = normalized.match(/(\d+)\s*(nguoi|ng)\b/);
+  return match ? Number(match[1]) : null;
 }
 
 function resolvePeople(message: string): number {
-  const normalized = normalizeText(message);
-  const match = normalized.match(/(\d+)\s*(nguoi|ng)\b/);
-  return match ? Number(match[1]) : 1;
+  return resolvePeopleHint(message) ?? 1;
 }
 
 function resolveRoomName(message: string): string | undefined {
@@ -189,7 +251,9 @@ function hasBookIntent(normalized: string): boolean {
 }
 
 function hasSearchIntent(normalized: string): boolean {
-  return /(phong trong|con phong nao|tim phong|check phong|xem phong trong)/.test(normalized);
+  return /(phong trong|con phong nao|tim phong|check phong|xem phong trong|cho toi.*phong|can.*phong|room available)/.test(
+    normalized
+  );
 }
 
 function parseCommonCommand(message: string): AIResponse | null {
@@ -253,6 +317,82 @@ function parseCommonCommand(message: string): AIResponse | null {
   return null;
 }
 
+function buildContextualBookingFollowup(message: string, conversationHistory: ChatMessage[]): AIResponse | null {
+  const hintedDate = resolveRelativeDate(message);
+  const hintedStartTime = resolveTime(message);
+  const hintedDuration = resolveDurationHint(message);
+  const hintedPeople = resolvePeopleHint(message);
+  const hintedRoomName = resolveRoomName(message);
+
+  const hasAnyHint =
+    hintedDate !== null ||
+    hintedStartTime !== null ||
+    hintedDuration !== null ||
+    hintedPeople !== null ||
+    typeof hintedRoomName === 'string';
+  if (!hasAnyHint) {
+    return null;
+  }
+
+  let baseAction: AIResponse | null = null;
+  for (let i = conversationHistory.length - 1; i >= 0; i -= 1) {
+    const item = conversationHistory[i];
+    if (item.role !== 'user') {
+      continue;
+    }
+    const parsed = parseCommonCommand(item.content);
+    if (parsed && (parsed.action === 'search' || parsed.action === 'book')) {
+      baseAction = parsed;
+      break;
+    }
+  }
+
+  if (!baseAction || (baseAction.action !== 'search' && baseAction.action !== 'book')) {
+    return null;
+  }
+
+  if (baseAction.action === 'book') {
+    const baseParams = baseAction.params;
+    const date = hintedDate ?? baseParams.date;
+    const startTime = hintedStartTime ?? baseParams.startTime;
+    const duration = hintedDuration ?? baseParams.duration;
+    const numberOfPeople = hintedPeople ?? baseParams.numberOfPeople;
+    if (!date || !startTime) {
+      return null;
+    }
+
+    return {
+      action: 'book',
+      params: {
+        roomName: hintedRoomName ?? baseParams.roomName,
+        numberOfPeople,
+        date,
+        startTime,
+        duration,
+      },
+    };
+  }
+
+  const baseParams = baseAction.params;
+  const date = hintedDate ?? baseParams.date;
+  const startTime = hintedStartTime ?? baseParams.startTime;
+  const duration = hintedDuration ?? baseParams.duration;
+  const numberOfPeople = hintedPeople ?? baseParams.numberOfPeople;
+  if (!date || !startTime) {
+    return null;
+  }
+
+  return {
+    action: 'search',
+    params: {
+      numberOfPeople,
+      date,
+      startTime,
+      duration,
+    },
+  };
+}
+
 function buildSystemPrompt(): string {
   const now = vnNow();
   const roomsInfo = config.rooms.map((room) => `- ${room.name}: tối đa ${room.capacity} người (id: ${room.id})`).join('\n');
@@ -288,7 +428,7 @@ Quy tắc:
 - Trả lời đúng trọng tâm, có thể kèm 1 câu hướng dẫn bước tiếp theo.`;
 }
 
-function coerceAiResponse(raw: unknown, fallback: AIResponse | null): AIResponse | null {
+function coerceAiResponse(raw: unknown, fallback: AIResponse | null, sourceMessage: string): AIResponse | null {
   if (!raw || typeof raw !== 'object') {
     return fallback;
   }
@@ -303,6 +443,11 @@ function coerceAiResponse(raw: unknown, fallback: AIResponse | null): AIResponse
     fallback && (fallback.action === 'search' || fallback.action === 'book')
       ? (fallback.params as { roomName?: string; numberOfPeople?: number; date?: string; startTime?: string; duration?: number })
       : undefined;
+  const hintedDate = resolveRelativeDate(sourceMessage);
+  const hintedStartTime = resolveTime(sourceMessage);
+  const hintedDuration = resolveDurationHint(sourceMessage);
+  const hintedPeople = resolvePeopleHint(sourceMessage);
+  const hintedRoomName = resolveRoomName(sourceMessage);
 
   if (action === 'list_rooms') {
     return { action: 'list_rooms', message: message ?? 'Mình sẽ hiển thị danh sách phòng hiện có.' };
@@ -330,13 +475,17 @@ function coerceAiResponse(raw: unknown, fallback: AIResponse | null): AIResponse
   if (action === 'search' || action === 'book') {
     const bookingAction: 'search' | 'book' = action === 'search' ? 'search' : 'book';
     const date =
-      typeof params.date === 'string'
+      typeof hintedDate === 'string'
+        ? hintedDate
+        : typeof params.date === 'string'
         ? params.date
         : typeof fallbackBookingParams?.date === 'string'
           ? fallbackBookingParams.date
           : undefined;
     const startTime =
-      typeof params.startTime === 'string'
+      typeof hintedStartTime === 'string'
+        ? hintedStartTime
+        : typeof params.startTime === 'string'
         ? params.startTime
         : typeof fallbackBookingParams?.startTime === 'string'
           ? fallbackBookingParams.startTime
@@ -345,19 +494,25 @@ function coerceAiResponse(raw: unknown, fallback: AIResponse | null): AIResponse
       return fallback ?? { action: 'clarify', message: 'Bạn muốn đặt phòng vào ngày nào và lúc mấy giờ?' };
     }
     const numberOfPeople =
-      typeof params.numberOfPeople === 'number'
+      typeof hintedPeople === 'number'
+        ? hintedPeople
+        : typeof params.numberOfPeople === 'number'
         ? params.numberOfPeople
         : typeof fallbackBookingParams?.numberOfPeople === 'number'
           ? fallbackBookingParams.numberOfPeople
           : 1;
     const duration =
-      typeof params.duration === 'number'
+      typeof hintedDuration === 'number'
+        ? hintedDuration
+        : typeof params.duration === 'number'
         ? params.duration
         : typeof fallbackBookingParams?.duration === 'number'
           ? fallbackBookingParams.duration
           : 60;
     const roomName =
-      typeof params.roomName === 'string'
+      typeof hintedRoomName === 'string'
+        ? hintedRoomName
+        : typeof params.roomName === 'string'
         ? params.roomName
         : typeof fallbackBookingParams?.roomName === 'string'
           ? fallbackBookingParams.roomName
@@ -391,7 +546,7 @@ function coerceAiResponse(raw: unknown, fallback: AIResponse | null): AIResponse
 }
 
 export async function processChat(message: string, conversationHistory: ChatMessage[] = []): Promise<AIResponse> {
-  const fallback = parseCommonCommand(message);
+  const fallback = parseCommonCommand(message) ?? buildContextualBookingFollowup(message, conversationHistory);
   const normalizedInput = normalizeText(message);
 
   if (config.openaiApiKey) {
@@ -413,7 +568,7 @@ export async function processChat(message: string, conversationHistory: ChatMess
       const content = completion.choices[0]?.message?.content;
       if (content) {
         const parsed = JSON.parse(content) as unknown;
-        const coerced = coerceAiResponse(parsed, fallback);
+        const coerced = coerceAiResponse(parsed, fallback, message);
         if (coerced) {
           const shouldPreferFallbackFromIntent =
             fallback &&

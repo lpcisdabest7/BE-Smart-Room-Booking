@@ -24,6 +24,53 @@ function buildDateTime(date: string, time: string): Date {
   return new Date(`${date}T${time}:00+07:00`);
 }
 
+function toMinuteValue(hour: number, minute: number, period?: string): number | null {
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+
+  let normalizedHour = hour;
+  if ((period === 'pm' || period === 'chieu' || period === 'toi') && normalizedHour < 12) {
+    normalizedHour += 12;
+  }
+  if ((period === 'am' || period === 'sang') && normalizedHour === 12) {
+    normalizedHour = 0;
+  }
+
+  if (normalizedHour < 0 || normalizedHour > 23) {
+    return null;
+  }
+
+  return normalizedHour * 60 + minute;
+}
+
+function hasExplicitStartEndWindow(message: string): boolean {
+  const normalized = normalizeText(message);
+  const match = normalized.match(
+    /(?:^|\b)(\d{1,2})(?:[:h.](\d{1,2}))?\s*(sang|chieu|toi|dem|am|pm)?\s*(?:-|den|toi|to)\s*(\d{1,2})(?:[:h.](\d{1,2}))?\s*(sang|chieu|toi|dem|am|pm)?(?:\b|$)/
+  );
+
+  if (!match) {
+    return false;
+  }
+
+  const startHour = Number(match[1] ?? '');
+  const startMinute = Number(match[2] ?? '00');
+  const startPeriod = match[3] ?? undefined;
+
+  const endHour = Number(match[4] ?? '');
+  const endMinute = Number(match[5] ?? '00');
+  const endPeriod = match[6] ?? startPeriod;
+
+  const startMinutes = toMinuteValue(startHour, startMinute, startPeriod);
+  const endMinutes = toMinuteValue(endHour, endMinute, endPeriod);
+  if (startMinutes == null || endMinutes == null) {
+    return false;
+  }
+
+  return endMinutes > startMinutes;
+}
+
 function resolveBookingErrorCode(error: unknown): string {
   if (!(error instanceof Error)) return 'UNKNOWN_ERROR';
   return (error as Error & { code?: string }).code || error.name || error.message;
@@ -36,6 +83,11 @@ function normalizeText(input: string): string {
     .replace(/[đĐ]/g, 'd')
     .toLowerCase()
     .trim();
+}
+
+function hasExplicitBookingIntent(message: string): boolean {
+  const normalized = normalizeText(message);
+  return /(dat phong|dat lich|book phong|book lich|tao booking|tao lich|len lich)/.test(normalized);
 }
 
 function findRoomByName(roomName?: string): { id: string; name: string } | undefined {
@@ -285,6 +337,15 @@ router.post('/', authMiddleware, async (req: Request, res: Response): Promise<vo
     }
 
     if (aiResponse.action === 'book') {
+      if (hasExplicitBookingIntent(message) && !hasExplicitStartEndWindow(message)) {
+        res.json({
+          type: 'clarify',
+          message: 'Để đặt phòng, vui lòng cung cấp rõ giờ bắt đầu và giờ kết thúc (ví dụ: 11:00 - 12:00).',
+          panelHint: 'none',
+        });
+        return;
+      }
+
       const { roomName, numberOfPeople, date, startTime, duration } = (aiResponse as AIBookAction).params;
       const startDateTime = buildDateTime(date, startTime);
       const endDateTime = new Date(startDateTime.getTime() + duration * 60 * 1000);
