@@ -71,6 +71,25 @@ function hasExplicitStartEndWindow(message: string): boolean {
   return endMinutes > startMinutes;
 }
 
+function hasExplicitDurationHint(message: string): boolean {
+  const normalized = normalizeText(message);
+
+  if (/(?:trong vong|trong|keo dai|duration|hop trong|for)\s*(\d+)\s*(gio|tieng|phut|m|p|h)\b/.test(normalized)) {
+    return true;
+  }
+
+  if (/(\d+)\s*(phut|minutes|minute|mins|min)\b/.test(normalized)) {
+    return true;
+  }
+
+  if (/(\d+)\s*(gio|tieng|hours|hour)\b/.test(normalized)) {
+    const looksLikeClockTime = /\b(luc|vao|at)\s*(\d+)\s*(gio|tieng)\b/.test(normalized);
+    return !looksLikeClockTime;
+  }
+
+  return false;
+}
+
 function resolveBookingErrorCode(error: unknown): string {
   if (!(error instanceof Error)) return 'UNKNOWN_ERROR';
   return (error as Error & { code?: string }).code || error.name || error.message;
@@ -337,16 +356,23 @@ router.post('/', authMiddleware, async (req: Request, res: Response): Promise<vo
     }
 
     if (aiResponse.action === 'book') {
-      if (hasExplicitBookingIntent(message) && !hasExplicitStartEndWindow(message)) {
+      const { roomName, numberOfPeople, date, startTime, duration } = (aiResponse as AIBookAction).params;
+      const shouldAskForDuration =
+        hasExplicitBookingIntent(message) &&
+        !hasExplicitStartEndWindow(message) &&
+        !hasExplicitDurationHint(message) &&
+        duration === 60;
+
+      if (shouldAskForDuration) {
         res.json({
           type: 'clarify',
-          message: 'Để đặt phòng, vui lòng cung cấp rõ giờ bắt đầu và giờ kết thúc (ví dụ: 11:00 - 12:00).',
+          message:
+            'Mình đã có ngày và giờ bắt đầu. Bạn cho mình thêm thời lượng hoặc giờ kết thúc (ví dụ: 60 phút hoặc 11:00 - 12:00) để mình gợi ý chính xác nhé.',
           panelHint: 'none',
         });
         return;
       }
 
-      const { roomName, numberOfPeople, date, startTime, duration } = (aiResponse as AIBookAction).params;
       const startDateTime = buildDateTime(date, startTime);
       const endDateTime = new Date(startDateTime.getTime() + duration * 60 * 1000);
       const candidates = await listCandidateRooms(numberOfPeople, startDateTime.toISOString(), endDateTime.toISOString());

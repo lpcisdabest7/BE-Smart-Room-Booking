@@ -26,18 +26,46 @@ function parseDmyToDate(day: number, month: number, year: number): Date {
 }
 
 function resolveWeekday(normalized: string): number | null {
-  if (/\b(cn|chu nhat)\b/.test(normalized)) {
+  if (/\b(cn|chu nhat|chu nhut|sunday)\b/.test(normalized)) {
     return 0;
   }
+
+  const weekdayTextMap: Record<string, number> = {
+    hai: 1,
+    ba: 2,
+    tu: 3,
+    bon: 3,
+    nam: 4,
+    sau: 5,
+    bay: 6,
+  };
 
   const thuMatch = normalized.match(/\bthu\s*([2-7])\b/);
   if (thuMatch) {
     return Number(thuMatch[1]) - 1;
   }
 
+  const thuTextMatch = normalized.match(/\bthu\s*(hai|ba|tu|bon|nam|sau|bay)\b/);
+  if (thuTextMatch) {
+    return weekdayTextMap[thuTextMatch[1]] ?? null;
+  }
+
   const shortMatch = normalized.match(/\bt\s*([2-7])\b/);
   if (shortMatch) {
     return Number(shortMatch[1]) - 1;
+  }
+
+  const englishMatch = normalized.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday)\b/);
+  if (englishMatch) {
+    const englishMap: Record<string, number> = {
+      monday: 1,
+      tuesday: 2,
+      wednesday: 3,
+      thursday: 4,
+      friday: 5,
+      saturday: 6,
+    };
+    return englishMap[englishMatch[1]] ?? null;
   }
 
   return null;
@@ -251,9 +279,23 @@ function hasBookIntent(normalized: string): boolean {
 }
 
 function hasSearchIntent(normalized: string): boolean {
-  return /(phong trong|con phong nao|tim phong|check phong|xem phong trong|cho toi.*phong|can.*phong|room available)/.test(
+  return /(phong trong|con phong nao|tim phong|check phong|xem phong trong|cho toi.*phong|can.*phong|room available|goi y phong|de xuat phong|tu van phong|suggest room|nen chon phong nao|find room|search room)/.test(
     normalized
   );
+}
+
+function hasRecommendationIntent(normalized: string): boolean {
+  return /(goi y phong|de xuat phong|tu van phong|suggest room|nen chon phong nao)/.test(normalized);
+}
+
+function buildRoomSuggestionSnippet(limit = 3): string {
+  const suggestions = config.rooms
+    .slice()
+    .sort((a, b) => a.capacity - b.capacity)
+    .slice(0, limit)
+    .map((room) => `${room.name} (${room.capacity} người)`);
+
+  return suggestions.length ? suggestions.join(', ') : 'chọn phòng phù hợp số người tham gia';
 }
 
 function parseCommonCommand(message: string): AIResponse | null {
@@ -295,7 +337,13 @@ function parseCommonCommand(message: string): AIResponse | null {
   const bookIntent = hasBookIntent(normalized);
   if (bookIntent) {
     if (!date || !startTime) {
-      return { action: 'clarify', message: 'Bạn muốn đặt vào ngày nào và lúc mấy giờ?' };
+      const missing: string[] = [];
+      if (!date) missing.push('ngày');
+      if (!startTime) missing.push('giờ bắt đầu');
+      return {
+        action: 'clarify',
+        message: `Để đặt phòng chính xác, bạn cho mình ${missing.join(' và ')} nhé.`,
+      };
     }
     return {
       action: 'book',
@@ -306,7 +354,16 @@ function parseCommonCommand(message: string): AIResponse | null {
   const searchIntent = hasSearchIntent(normalized);
   if (searchIntent) {
     if (!date || !startTime) {
-      return { action: 'clarify', message: 'Bạn muốn kiểm tra phòng vào ngày nào và lúc mấy giờ?' };
+      const missing: string[] = [];
+      if (!date) missing.push('ngày');
+      if (!startTime) missing.push('giờ bắt đầu');
+      const recommendationTail = hasRecommendationIntent(normalized)
+        ? ` Gợi ý nhanh: ${buildRoomSuggestionSnippet()}.`
+        : '';
+      return {
+        action: 'clarify',
+        message: `Để gợi ý đúng trọng tâm, bạn cho mình ${missing.join(' và ')} nhé.${recommendationTail}`,
+      };
     }
     return {
       action: 'search',
@@ -395,18 +452,24 @@ function buildContextualBookingFollowup(message: string, conversationHistory: Ch
 
 function buildSystemPrompt(): string {
   const now = vnNow();
-  const roomsInfo = config.rooms.map((room) => `- ${room.name}: tối đa ${room.capacity} người (id: ${room.id})`).join('\n');
+  const roomsInfo = config.rooms
+    .map((room) => {
+      const floor = room.floor !== undefined ? `, tầng ${room.floor}` : '';
+      const equipment = room.equipment?.length ? room.equipment.slice(0, 3).join(', ') : 'chưa có dữ liệu';
+      return `- ${room.name}: tối đa ${room.capacity} người${floor}, thiết bị: ${equipment} (id: ${room.id})`;
+    })
+    .join('\n');
 
-  return `Bạn là trợ lý đặt phòng họp cho Apero.
-Hôm nay là ${toIsoDate(now)}, giờ hiện tại ${now.toISOString().slice(11, 16)} (UTC+7).
+  return `Bạn là trợ lý booking phòng họp cho Apero.
+Thời gian chuẩn để hiểu ngày/giờ là UTC+7. Hôm nay là ${toIsoDate(now)}, hiện tại ${now.toISOString().slice(11, 16)} (UTC+7).
 
-Danh sách phòng:
+Danh sách phòng hiện có:
 ${roomsInfo}
 
-Trả về JSON hợp lệ, theo format:
+Bạn PHẢI trả về DUY NHẤT 1 JSON hợp lệ, không markdown, không text ngoài JSON:
 {
   "action": "search|book|check_booking|check_room_schedule|list_rooms|clarify|info",
-  "message": "câu trả lời tiếng Việt có dấu, tự nhiên, không lặp máy móc",
+  "message": "tiếng Việt tự nhiên, ngắn gọn, đúng trọng tâm",
   "params": {
     "roomName": "...",
     "numberOfPeople": 1,
@@ -418,14 +481,29 @@ Trả về JSON hợp lệ, theo format:
   }
 }
 
-Quy tắc:
-- Nếu user muốn đặt phòng: action=book.
-- Nếu user muốn xem phòng trống theo thời điểm cụ thể: action=search.
-- Nếu user muốn xem lịch phòng theo tháng/ngày: action=check_room_schedule.
-- Nếu user muốn xem lịch của chính họ: action=check_booking.
-- Nếu user đã nêu đủ ngày và giờ thì không được trả clarify.
+Quy tắc intent:
+- Đặt phòng => action=book.
+- Tìm phòng trống hoặc hỏi gợi ý phòng theo thời điểm => action=search.
+- Xem lịch của phòng => action=check_room_schedule.
+- Xem booking của chính user => action=check_booking.
+
+Quy tắc thời gian (bắt buộc):
+- Nếu user nêu thứ/ngày cụ thể thì phải giữ đúng thứ/ngày đó trong params.date.
+- Tuyệt đối không tự đổi sang ngày khác (ví dụ user nói thứ 5 thì không được chuyển chủ nhật).
+- Nếu user chỉ nêu thứ (chưa có ngày), quy đổi sang ngày gần nhất sắp tới theo UTC+7.
+- Có "tuần sau/next week" thì đẩy sang tuần kế tiếp.
+- Không chắc ngày hoặc giờ => action=clarify, hỏi đúng phần còn thiếu, không đoán.
+
+Quy tắc gợi ý:
+- Nếu user hỏi gợi ý/đề xuất phòng, câu trả lời phải nêu phòng cụ thể từ danh sách phòng.
+- Nếu user chưa nêu đủ ngày hoặc giờ, dùng action=clarify và message phải:
+  1) hỏi đúng trường còn thiếu,
+  2) kèm gợi ý ngắn (2-3 phòng phù hợp).
+
+Quy tắc chất lượng:
 - numberOfPeople mặc định 1, duration mặc định 60.
-- Trả lời đúng trọng tâm, có thể kèm 1 câu hướng dẫn bước tiếp theo.`;
+- Không bịa dữ liệu phòng ngoài danh sách.
+- Ưu tiên đúng trọng tâm booking hơn giải thích dài dòng.`;
 }
 
 function coerceAiResponse(raw: unknown, fallback: AIResponse | null, sourceMessage: string): AIResponse | null {
@@ -473,7 +551,18 @@ function coerceAiResponse(raw: unknown, fallback: AIResponse | null, sourceMessa
     return { action: 'info', message: message ?? 'Mình có thể giúp bạn tìm phòng, đặt phòng hoặc kiểm tra lịch.' };
   }
   if (action === 'search' || action === 'book') {
+    if (fallback?.action === 'clarify' && (!hintedDate || !hintedStartTime)) {
+      return fallback;
+    }
+
     const bookingAction: 'search' | 'book' = action === 'search' ? 'search' : 'book';
+    const hasDateEvidence = typeof hintedDate === 'string' || typeof fallbackBookingParams?.date === 'string';
+    const hasStartTimeEvidence = typeof hintedStartTime === 'string' || typeof fallbackBookingParams?.startTime === 'string';
+
+    if (!hasDateEvidence || !hasStartTimeEvidence) {
+      return fallback ?? { action: 'clarify', message: 'Bạn cho mình ngày và giờ cụ thể để mình tìm phòng chính xác nhé.' };
+    }
+
     const date =
       typeof hintedDate === 'string'
         ? hintedDate
