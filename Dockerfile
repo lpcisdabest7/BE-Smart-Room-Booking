@@ -21,8 +21,10 @@ RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
 
-RUN mkdir -p /app/data
+COPY seed.sql ./seed.sql
+COPY scripts/docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh && mkdir -p /app/data
 
 EXPOSE 3001
 
-CMD ["node", "dist/app.js"]
+ENTRYPOINT ["./docker-entrypoint.sh"]

@@ -223,6 +223,12 @@
       "type": "file"
     },
     {
+      "path": "Dockerfile",
+      "accessCount": 2,
+      "lastAccessed": 1775468935570,
+      "type": "file"
+    },
+    {
       "path": "src/routes/chat.ts",
       "accessCount": 1,
       "lastAccessed": 1775467994268,
@@ -256,6 +262,30 @@
       "path": "src/config/index.ts",
       "accessCount": 1,
       "lastAccessed": 1775468692499,
+      "type": "file"
+    },
+    {
+      "path": "package.json",
+      "accessCount": 1,
+      "lastAccessed": 1775468885934,
+      "type": "file"
+    },
+    {
+      "path": ".env.example",
+      "accessCount": 1,
+      "lastAccessed": 1775468891311,
+      "type": "file"
+    },
+    {
+      "path": "scripts/docker-entrypoint.sh",
+      "accessCount": 1,
+      "lastAccessed": 1775468910320,
+      "type": "file"
+    },
+    {
+      "path": "docker-compose.yml",
+      "accessCount": 1,
+      "lastAccessed": 1775468939220,
       "type": "file"
     }
   ],

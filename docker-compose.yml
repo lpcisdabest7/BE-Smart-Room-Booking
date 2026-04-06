@@ -1,0 +1,13 @@
+services:
+  api:
+    build: .
+    ports:
+      - "${PORT:-3001}:3001"
+    env_file:
+      - .env
+    volumes:
+      - db_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  db_data:
