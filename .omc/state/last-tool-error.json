@@ -1,7 +1,7 @@
 {
-  "tool_name": "mcp__plugin_oh-my-claudecode_t__lsp_diagnostics",
-  "tool_input_preview": "{\"file\":\"/home/cuonglp/apero/BE-Smart-Room-Booking/src/services/calendar.service.ts\"}",
-  "error": "Language server 'typescript-language-server' not found.\nInstall with: npm install -g typescript-language-server typescript",
-  "timestamp": "2026-04-06T09:39:12.671Z",
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"sqlite3 /home/cuonglp/apero/BE-Smart-Room-Booking/data/smart-room-booking.sqlite \\\".tables\\\" && echo \\\"---\\\" && sqlite3 /home/cuonglp/apero/BE-Smart-Room-Booking/data/smart-room-booking.sq...",
+  "error": "Exit code 127\n(eval):1: command not found: sqlite3",
+  "timestamp": "2026-04-06T09:45:09.052Z",
   "retry_count": 1
 }

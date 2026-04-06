@@ -239,6 +239,24 @@
       "accessCount": 1,
       "lastAccessed": 1775468005640,
       "type": "file"
+    },
+    {
+      "path": "src/db/schema.ts",
+      "accessCount": 1,
+      "lastAccessed": 1775468688327,
+      "type": "file"
+    },
+    {
+      "path": "src/db/sqlite.ts",
+      "accessCount": 1,
+      "lastAccessed": 1775468688613,
+      "type": "file"
+    },
+    {
+      "path": "src/config/index.ts",
+      "accessCount": 1,
+      "lastAccessed": 1775468692499,
+      "type": "file"
     }
   ],
   "userDirectives": []
